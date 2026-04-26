@@ -17,8 +17,32 @@ from markupsafe import Markup
 from bot.misc import EnvKeys
 from bot.database.methods.audit import log_audit
 from bot.database.methods.transactions import admin_balance_change
+from bot.database.methods.update import change_user_telegram_id
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_original_user_id(request: Request, model: Any) -> int | None:
+    for key in ("pk", "identity", "id"):
+        raw = request.path_params.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+
+    path_parts = [part for part in request.url.path.rstrip("/").split("/") if part]
+    for part in reversed(path_parts):
+        try:
+            return int(part)
+        except ValueError:
+            continue
+
+    try:
+        return int(getattr(model, "telegram_id", 0) or 0)
+    except (TypeError, ValueError):
+        return None
 
 
 class LoginRateLimiter:
@@ -155,27 +179,63 @@ class UserAdmin(AuditModelView, model=User):
         if is_created:
             return
 
-        if "balance" not in data:
-            return
+        original_telegram_id = _extract_original_user_id(request, model)
+        desired_telegram_id = data.get("telegram_id", getattr(model, "telegram_id", None))
+        try:
+            desired_telegram_id = int(desired_telegram_id) if desired_telegram_id is not None else None
+        except (TypeError, ValueError):
+            raise ValueError("Telegram ID no valido.")
 
         async with Database().session() as s:
-            persisted = await s.get(User, model.telegram_id)
+            persisted = await s.get(User, original_telegram_id) if original_telegram_id else None
             if not persisted:
-                return
-            old_balance = Decimal(str(persisted.balance or 0))
+                raise ValueError("Usuario no encontrado.")
 
-        new_balance = Decimal(str(data.get("balance") or model.balance or 0))
-        delta = new_balance - old_balance
-        request.state._pending_balance_delta = delta
+            if (
+                original_telegram_id
+                and desired_telegram_id
+                and desired_telegram_id != original_telegram_id
+            ):
+                existing_target = await s.get(User, desired_telegram_id)
+                if existing_target:
+                    raise ValueError("Ya existe un usuario con ese Telegram ID.")
+                request.state._pending_telegram_id_change = (original_telegram_id, desired_telegram_id)
+                model.telegram_id = original_telegram_id
 
-        # Avoid double-applying the balance if SQLAdmin writes the edited value directly.
-        model.balance = old_balance
+            if "balance" in data:
+                old_balance = Decimal(str(persisted.balance or 0))
+                new_balance = Decimal(str(data.get("balance") or model.balance or 0))
+                delta = new_balance - old_balance
+                request.state._pending_balance_delta = delta
+
+                # Avoid double-applying the balance if SQLAdmin writes the edited value directly.
+                model.balance = old_balance
+
 
     async def after_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
+        final_telegram_id = getattr(model, "telegram_id", None)
+        pending_telegram_id_change = getattr(request.state, "_pending_telegram_id_change", None)
+        if not is_created and pending_telegram_id_change:
+            old_telegram_id, new_telegram_id = pending_telegram_id_change
+            success, result = await change_user_telegram_id(old_telegram_id, new_telegram_id)
+            if not success:
+                raise ValueError(f"No se pudo cambiar el Telegram ID: {result}")
+            final_telegram_id = new_telegram_id
+            model.telegram_id = new_telegram_id
+
+            try:
+                from bot.main import auth_middleware
+                if auth_middleware:
+                    auth_middleware.invalidate_admin_cache(old_telegram_id)
+                    auth_middleware.invalidate_admin_cache(new_telegram_id)
+                    auth_middleware.blocked_users.discard(old_telegram_id)
+            except Exception:
+                pass
+
         await super().after_model_change(data, model, is_created, request)
         delta = getattr(request.state, "_pending_balance_delta", None)
         if not is_created and delta and delta != 0:
-            await admin_balance_change(model.telegram_id, delta)
+            await admin_balance_change(final_telegram_id or model.telegram_id, delta)
 
 
 _PERM_FLAGS = [
