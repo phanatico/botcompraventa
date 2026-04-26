@@ -16,7 +16,7 @@ from sqlalchemy import text, select
 
 from markupsafe import Markup
 
-from bot.misc import EnvKeys
+from bot.misc import EnvKeys, format_dt, format_date, days_left, days_left_str
 from bot.database.methods.audit import log_audit
 from bot.database.methods.update import change_user_telegram_id
 from bot.database.methods.read import get_stock_dashboard_rows, invalidate_item_cache, invalidate_stats_cache
@@ -112,7 +112,7 @@ def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse
   <title>{escape(title)}</title>
   <style>
     body {{ font-family: Arial, sans-serif; background:#f3f6fb; margin:0; padding:24px; color:#162036; }}
-    .wrap {{ max-width: 1200px; margin:0 auto; background:white; border-radius:14px; padding:24px 28px; box-shadow:0 10px 35px rgba(15,23,42,.08); }}
+    .wrap {{ max-width: 1480px; margin:0 auto; background:white; border-radius:14px; padding:24px 28px; box-shadow:0 10px 35px rgba(15,23,42,.08); }}
     h1 {{ margin:0 0 16px; font-size:28px; }}
     h2 {{ margin-top:28px; font-size:22px; }}
     .nav a {{ display:inline-block; margin:0 12px 12px 0; padding:10px 14px; background:#1d4ed8; color:white; text-decoration:none; border-radius:8px; }}
@@ -133,14 +133,36 @@ def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse
     .hint {{ color:#475569; font-size:14px; margin-top:6px; }}
     .ok {{ color:#166534; font-weight:700; }}
     .muted {{ color:#64748b; }}
+    .tabs {{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }}
+    .tabs a {{ padding:8px 14px; border-radius:999px; background:#e2e8f0; color:#0f172a; text-decoration:none; font-weight:600; font-size:14px; }}
+    .tabs a.active {{ background:#1d4ed8; color:white; }}
+    .tabs a .count {{ background:rgba(255,255,255,.25); padding:1px 8px; border-radius:999px; margin-left:6px; font-size:12px; }}
+    .tabs a:not(.active) .count {{ background:#cbd5e1; }}
+    .filters {{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:10px; }}
+    .filters input, .filters select {{ width:auto; min-width:200px; padding:8px 10px; }}
+    .filters button {{ margin:0; padding:9px 14px; }}
+    .badge {{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; }}
+    .badge-active {{ background:#dcfce7; color:#166534; }}
+    .badge-expired {{ background:#fee2e2; color:#991b1b; }}
+    .badge-cancelled {{ background:#e2e8f0; color:#475569; }}
+    .badge-expiring {{ background:#fef3c7; color:#92400e; }}
+    .days {{ display:inline-block; min-width:38px; text-align:center; padding:4px 8px; border-radius:999px; font-weight:800; }}
+    .days-ok {{ background:#dcfce7; color:#166534; }}
+    .days-warn {{ background:#fef3c7; color:#92400e; }}
+    .days-bad {{ background:#fee2e2; color:#991b1b; }}
+    table.compact th, table.compact td {{ padding:7px 6px; font-size:13px; }}
+    table.compact code {{ font-size:12px; }}
+    .stock-low td {{ background:#fff7ed; }}
+    .stock-empty td {{ background:#fef2f2; }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="nav">
       <a href="/tools">Herramientas</a>
-      <a href="/tools/stock" class="secondary">Stock</a>
-      <a href="/tools/products/new" class="secondary">Nuevo producto rapido</a>
+      <a href="/tools/stock" class="secondary">📦 Stock</a>
+      <a href="/tools/purchases" class="secondary">🛒 Mis Compras</a>
+      <a href="/tools/products/new" class="secondary">Nuevo producto</a>
       <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
       <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
       <a href="/admin" class="secondary">Volver al panel</a>
@@ -753,12 +775,28 @@ async def tools_home(request: Request) -> HTMLResponse:
         return auth_redirect
 
     body = """
-    <p>Estas herramientas dejan el flujo comercial mas claro sin depender de los formularios genericos de SQLAdmin.</p>
-    <ul>
-      <li><b>Nuevo producto rapido</b>: crea productos con selector clasico de categoria por raton.</li>
+    <p>Centro de control rapido del catalogo y las ventas.</p>
+    <div class="row" style="margin-top:18px">
+      <a href="/tools/stock" style="display:block;padding:18px;border-radius:12px;background:#1d4ed8;color:white;text-decoration:none;font-weight:700">
+        📦 Stock por producto<br><span style="font-weight:400;font-size:13px">Disponible, asignado, vencido y cancelado en tiempo real.</span>
+      </a>
+      <a href="/tools/purchases" style="display:block;padding:18px;border-radius:12px;background:#0ea5e9;color:white;text-decoration:none;font-weight:700">
+        🛒 Mis Compras<br><span style="font-weight:400;font-size:13px">Todas las compras con dias restantes, cliente y filtros por estado.</span>
+      </a>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <a href="/tools/cuentas/bulk-unique" style="display:block;padding:18px;border-radius:12px;background:#16a34a;color:white;text-decoration:none;font-weight:700">
+        ⚡ Bulk productos unicos<br><span style="font-weight:400;font-size:13px">Crea 10, 50 o 100 productos unicos con sus cuentas en un solo envio.</span>
+      </a>
+      <a href="/tools/cuentas/bulk-existing" style="display:block;padding:18px;border-radius:12px;background:#475569;color:white;text-decoration:none;font-weight:700">
+        🧾 Bulk cuentas<br><span style="font-weight:400;font-size:13px">Anade muchas cuentas a un producto que ya existe.</span>
+      </a>
+    </div>
+    <ul style="margin-top:24px;color:#475569">
+      <li><b>Stock</b>: vista real de disponible, asignado, vencido y cancelado por producto.</li>
+      <li><b>Mis Compras</b>: dashboard de pedidos con tabs (Activos, Por vencer, Vencidos, Cancelados) y dias restantes.</li>
+      <li><b>Bulk productos unicos</b>: pega un bloque tipo <code>usuario|clave|url</code> y crea muchos productos unicos a la vez.</li>
       <li><b>Bulk cuentas</b>: pega muchas cuentas para un producto existente.</li>
-      <li><b>Bulk productos unicos</b>: crea muchos productos unicos con sus cuentas asociadas en un solo paso.</li>
-      <li><b>Stock</b>: vista real de disponible, asignado, vencido y cancelado.</li>
     </ul>
     """
     return _render_tools_page("Herramientas de catalogo", body)
@@ -769,24 +807,111 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
     if auth_redirect:
         return auth_redirect
 
+    q = (request.query_params.get("q") or "").strip().lower()
+    category_filter = (request.query_params.get("category") or "").strip()
+    status_filter = (request.query_params.get("status") or "").strip()  # all|active|inactive|low|empty
+
     rows = await get_stock_dashboard_rows()
-    table_rows = "".join(
-        f"<tr>"
-        f"<td>{row['id']}</td>"
-        f"<td>{escape(str(row['category_name']))}</td>"
-        f"<td>{escape(row['name'])}</td>"
-        f"<td>{row['price']}</td>"
-        f"<td>{'Si' if row['is_active'] else 'No'}</td>"
-        f"<td>{row['display']}</td>"
-        f"<td>{row['assigned']}</td>"
-        f"<td>{row['expired']}</td>"
-        f"<td>{row['cancelled']}</td>"
-        f"</tr>"
-        for row in rows
+    categories = sorted({str(r["category_name"]) for r in rows})
+
+    def keep(row: dict) -> bool:
+        if q and q not in row["name"].lower() and q not in str(row["category_name"]).lower():
+            return False
+        if category_filter and str(row["category_name"]) != category_filter:
+            return False
+        if status_filter == "active" and not row["is_active"]:
+            return False
+        if status_filter == "inactive" and row["is_active"]:
+            return False
+        if status_filter == "low":
+            if row["has_infinite"]:
+                return False
+            if not (0 < int(row["available"]) <= 3):
+                return False
+        if status_filter == "empty":
+            if row["has_infinite"]:
+                return False
+            if int(row["available"]) > 0:
+                return False
+        return True
+
+    visible = [r for r in rows if keep(r)]
+
+    total = len(rows)
+    total_active = sum(1 for r in rows if r["is_active"])
+    total_low = sum(1 for r in rows if not r["has_infinite"] and 0 < int(r["available"]) <= 3)
+    total_empty = sum(1 for r in rows if not r["has_infinite"] and int(r["available"]) == 0)
+
+    def tab(label: str, key: str, count: int) -> str:
+        active_cls = "active" if status_filter == key or (key == "all" and not status_filter) else ""
+        href_status = "" if key == "all" else f"&status={key}"
+        href = f"/tools/stock?q={escape(q)}&category={escape(category_filter)}{href_status}"
+        return f'<a class="{active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
+
+    tabs_html = (
+        '<div class="tabs">'
+        f'{tab("Todos", "all", total)}'
+        f'{tab("Activos", "active", total_active)}'
+        f'{tab("Stock bajo", "low", total_low)}'
+        f'{tab("Sin stock", "empty", total_empty)}'
+        f'{tab("Inactivos", "inactive", total - total_active)}'
+        '</div>'
     )
+
+    cat_options = "".join(
+        f'<option value="{escape(c)}"{" selected" if c == category_filter else ""}>{escape(c)}</option>'
+        for c in categories
+    )
+
+    def render_row(row: dict) -> str:
+        if row["has_infinite"]:
+            disp = '<span class="badge badge-active">Ilimitado</span>'
+            extra_cls = ""
+        else:
+            avail = int(row["available"])
+            if avail == 0:
+                disp = f'<span class="badge badge-expired">Sin stock</span>'
+                extra_cls = "stock-empty"
+            elif avail <= 3:
+                disp = f'<span class="badge badge-expiring">{avail}</span>'
+                extra_cls = "stock-low"
+            else:
+                disp = f'<span class="badge badge-active">{avail}</span>'
+                extra_cls = ""
+        active_badge = (
+            '<span class="badge badge-active">Si</span>' if row["is_active"]
+            else '<span class="badge badge-cancelled">No</span>'
+        )
+        return (
+            f'<tr class="{extra_cls}">'
+            f'<td>{row["id"]}</td>'
+            f'<td>{escape(str(row["category_name"]))}</td>'
+            f'<td><b>{escape(row["name"])}</b></td>'
+            f'<td>{row["price"]}</td>'
+            f'<td>{active_badge}</td>'
+            f'<td>{disp}</td>'
+            f'<td>{row["assigned"]}</td>'
+            f'<td>{row["expired"]}</td>'
+            f'<td>{row["cancelled"]}</td>'
+            f'</tr>'
+        )
+
+    table_rows = "".join(render_row(r) for r in visible)
+
     body = f"""
-    <p>Vista real de stock por producto. <b>Disponible</b> cuenta solo lo vendible ahora mismo. Si hay stock infinito veras <code>Ilimitado</code>.</p>
-    <table>
+    <p>Vista real de stock por producto. <b>Disponible</b> cuenta lo vendible ahora mismo. Si el producto es ilimitado se muestra como tal.</p>
+    {tabs_html}
+    <form method="get" class="filters">
+      <input type="text" name="q" placeholder="Buscar producto o categoria..." value="{escape(q)}">
+      <select name="category">
+        <option value="">Todas las categorias</option>
+        {cat_options}
+      </select>
+      <input type="hidden" name="status" value="{escape(status_filter)}">
+      <button type="submit">Filtrar</button>
+      <a href="/tools/stock" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
+    </form>
+    <table class="compact">
       <thead>
         <tr>
           <th>ID</th>
@@ -800,10 +925,11 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
           <th>Cancelado</th>
         </tr>
       </thead>
-      <tbody>{table_rows or "<tr><td colspan='9' class='muted'>Todavia no hay productos.</td></tr>"}</tbody>
+      <tbody>{table_rows or "<tr><td colspan='9' class='muted'>No hay productos que coincidan con el filtro.</td></tr>"}</tbody>
     </table>
+    <p class="hint">Mostrando {len(visible)} de {total} productos. Stock bajo = 1-3 disponibles. Sin stock = 0 disponibles.</p>
     """
-    return _render_tools_page("Dashboard de stock", body)
+    return _render_tools_page("📦 Dashboard de stock", body)
 
 
 async def quick_new_product(request: Request) -> HTMLResponse:
@@ -1150,6 +1276,232 @@ async def bulk_unique_products(request: Request) -> HTMLResponse:
     return _render_tools_page("Bulk de productos unicos", body, message=message)
 
 
+async def purchases_dashboard(request: Request) -> HTMLResponse:
+    """Mis Compras admin dashboard with status tabs, filters, days countdown."""
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    q = (request.query_params.get("q") or "").strip()
+    tab = (request.query_params.get("tab") or "all").strip()
+    try:
+        page = max(int(request.query_params.get("page") or "1"), 1)
+    except ValueError:
+        page = 1
+    per_page = 50
+
+    now = datetime.now(timezone.utc)
+    soon = now.replace(microsecond=0)
+
+    async with Database().session() as s:
+        # Base counters per tab (independent of pagination/search except q)
+        base_filters = []
+        if q:
+            like = f"%{q}%"
+            base_filters.append(
+                BoughtGoods.item_name.ilike(like)
+                | BoughtGoods.buyer_username_snapshot.ilike(like)
+                | BoughtGoods.buyer_first_name_snapshot.ilike(like)
+                | BoughtGoods.buyer_email_snapshot.ilike(like)
+                | BoughtGoods.buyer_whatsapp_snapshot.ilike(like)
+                | BoughtGoods.stock_username.ilike(like)
+            )
+            # Try matching by exact buyer_id / unique_id when q is numeric
+            if q.isdigit():
+                from sqlalchemy import or_ as sa_or
+                base_filters[-1] = sa_or(
+                    base_filters[-1],
+                    BoughtGoods.buyer_id == int(q),
+                    BoughtGoods.unique_id == int(q),
+                )
+
+        from sqlalchemy import func as sa_func, and_ as sa_and, or_ as sa_or
+
+        # Compute tab counters
+        async def cnt(extra) -> int:
+            stmt = select(sa_func.count(BoughtGoods.id))
+            for f in base_filters:
+                stmt = stmt.where(f)
+            if extra is not None:
+                stmt = stmt.where(extra)
+            return int((await s.execute(stmt)).scalar() or 0)
+
+        c_all = await cnt(None)
+        c_active = await cnt(sa_and(
+            BoughtGoods.status == "active",
+            sa_or(BoughtGoods.expires_at.is_(None), BoughtGoods.expires_at > now),
+        ))
+        from datetime import timedelta as _td
+        c_expiring = await cnt(sa_and(
+            BoughtGoods.status.in_(["active", "expiring"]),
+            BoughtGoods.expires_at.is_not(None),
+            BoughtGoods.expires_at > now,
+            BoughtGoods.expires_at <= now + _td(days=7),
+        ))
+        c_expired = await cnt(sa_or(
+            BoughtGoods.status == "expired",
+            sa_and(BoughtGoods.expires_at.is_not(None), BoughtGoods.expires_at <= now),
+        ))
+        c_cancelled = await cnt(BoughtGoods.status == "cancelled")
+        c_renewable = await cnt(BoughtGoods.is_renewable.is_(True))
+
+        # Apply tab filter
+        tab_filter = None
+        if tab == "active":
+            tab_filter = sa_and(
+                BoughtGoods.status == "active",
+                sa_or(BoughtGoods.expires_at.is_(None), BoughtGoods.expires_at > now),
+            )
+        elif tab == "expiring":
+            tab_filter = sa_and(
+                BoughtGoods.status.in_(["active", "expiring"]),
+                BoughtGoods.expires_at.is_not(None),
+                BoughtGoods.expires_at > now,
+                BoughtGoods.expires_at <= now + _td(days=7),
+            )
+        elif tab == "expired":
+            tab_filter = sa_or(
+                BoughtGoods.status == "expired",
+                sa_and(BoughtGoods.expires_at.is_not(None), BoughtGoods.expires_at <= now),
+            )
+        elif tab == "cancelled":
+            tab_filter = BoughtGoods.status == "cancelled"
+        elif tab == "renewable":
+            tab_filter = BoughtGoods.is_renewable.is_(True)
+
+        stmt = select(BoughtGoods)
+        for f in base_filters:
+            stmt = stmt.where(f)
+        if tab_filter is not None:
+            stmt = stmt.where(tab_filter)
+        stmt = stmt.order_by(BoughtGoods.id.desc()).limit(per_page).offset((page - 1) * per_page)
+
+        purchases = (await s.execute(stmt)).scalars().all()
+
+        # Aggregate header stats (always full unfiltered)
+        total_revenue = (await s.execute(select(sa_func.sum(BoughtGoods.price)))).scalar() or 0
+
+    def days_class(d: int | None, status: str) -> str:
+        if status == "cancelled":
+            return "days-bad"
+        if d is None:
+            return "days-ok"
+        if d <= 0:
+            return "days-bad"
+        if d <= 7:
+            return "days-warn"
+        return "days-ok"
+
+    def status_badge(p: BoughtGoods, d_left: int | None) -> str:
+        if p.status == "cancelled":
+            return '<span class="badge badge-cancelled">Cancelado</span>'
+        if p.status == "expired" or (d_left is not None and d_left <= 0 and p.expires_at is not None):
+            return '<span class="badge badge-expired">Vencido</span>'
+        if d_left is not None and d_left <= 7:
+            return '<span class="badge badge-expiring">Por vencer</span>'
+        return '<span class="badge badge-active">Activo</span>'
+
+    rows_html_parts: list[str] = []
+    for p in purchases:
+        d_left = days_left(p.expires_at)
+        cliente = ""
+        if p.buyer_username_snapshot:
+            cliente = f"@{escape(p.buyer_username_snapshot)}"
+        elif p.buyer_first_name_snapshot:
+            cliente = escape(p.buyer_first_name_snapshot)
+        else:
+            cliente = "—"
+        contact_bits: list[str] = []
+        if p.buyer_email_snapshot:
+            contact_bits.append(escape(p.buyer_email_snapshot))
+        if p.buyer_whatsapp_snapshot:
+            contact_bits.append(escape(p.buyer_whatsapp_snapshot))
+        contact_html = "<br>".join(contact_bits) if contact_bits else '<span class="muted">—</span>'
+
+        cuenta_user = escape(p.stock_username) if p.stock_username else '<span class="muted">—</span>'
+        cuenta_url = f'<a href="{escape(p.stock_url)}" target="_blank">{escape(p.stock_url)}</a>' if p.stock_url else '<span class="muted">—</span>'
+        days_str = days_left_str(p.expires_at)
+        days_chip = f'<span class="days {days_class(d_left, p.status)}">{days_str}</span>'
+
+        rows_html_parts.append(
+            "<tr>"
+            f"<td>{p.id}</td>"
+            f"<td><b>{escape(p.item_name)}</b><div class='muted'>{p.duration_days} dias</div></td>"
+            f"<td>{cliente}<div class='muted'>{p.buyer_id or '—'}</div></td>"
+            f"<td>{contact_html}</td>"
+            f"<td>{cuenta_user}</td>"
+            f"<td style='max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{cuenta_url}</td>"
+            f"<td>{p.price}</td>"
+            f"<td>{escape(format_dt(p.bought_datetime))}</td>"
+            f"<td>{escape(format_date(p.expires_at))}</td>"
+            f"<td>{days_chip}</td>"
+            f"<td>{status_badge(p, d_left)}</td>"
+            f"<td><code>{p.unique_id}</code></td>"
+            "</tr>"
+        )
+    rows_html = "".join(rows_html_parts) or "<tr><td colspan='12' class='muted'>No hay compras que coincidan con el filtro.</td></tr>"
+
+    def tab_link(label: str, key: str, count: int) -> str:
+        active_cls = "active" if tab == key or (key == "all" and tab not in {"active", "expiring", "expired", "cancelled", "renewable"}) else ""
+        href = f"/tools/purchases?tab={key}&q={escape(q)}"
+        return f'<a class="{active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
+
+    tabs_html = (
+        '<div class="tabs">'
+        f'{tab_link("Todas", "all", c_all)}'
+        f'{tab_link("Activas", "active", c_active)}'
+        f'{tab_link("Por vencer (7d)", "expiring", c_expiring)}'
+        f'{tab_link("Vencidas", "expired", c_expired)}'
+        f'{tab_link("Canceladas", "cancelled", c_cancelled)}'
+        f'{tab_link("Renovables", "renewable", c_renewable)}'
+        '</div>'
+    )
+
+    # Pagination links
+    has_more = len(purchases) == per_page
+    pagination_parts = []
+    if page > 1:
+        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page - 1}">« Anterior</a>')
+    pagination_parts.append(f'<span class="muted">Pagina {page}</span>')
+    if has_more:
+        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page + 1}">Siguiente »</a>')
+    pagination_html = ' &nbsp; '.join(pagination_parts)
+
+    body = f"""
+    <p>Vista de <b>todas las compras</b> con dias restantes, cliente, cuenta entregada y estado en tiempo real.
+    Las tabs filtran por estado, la barra busca por producto, cliente, email, whatsapp, usuario de cuenta, ID Telegram o pedido.</p>
+    <p class="hint"><b>Total facturado historico</b>: {total_revenue} {EnvKeys.PAY_CURRENCY}</p>
+    {tabs_html}
+    <form method="get" class="filters">
+      <input type="hidden" name="tab" value="{escape(tab)}">
+      <input type="text" name="q" placeholder="Buscar producto, cliente, email, whatsapp, ID Telegram, pedido..." value="{escape(q)}" style="min-width:360px">
+      <button type="submit">Buscar</button>
+      <a href="/tools/purchases?tab={escape(tab)}" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
+    </form>
+    <table class="compact">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Producto</th>
+          <th>Cliente</th>
+          <th>Contacto</th>
+          <th>Usuario cuenta</th>
+          <th>URL cuenta</th>
+          <th>Precio</th>
+          <th>Fecha de inicio</th>
+          <th>Vence</th>
+          <th>Dias</th>
+          <th>Estado</th>
+          <th>Pedido</th>
+        </tr>
+      </thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+    <div style="margin-top:14px;display:flex;gap:14px;align-items:center">{pagination_html}</div>
+    """
+    return _render_tools_page("🛒 Mis Compras", body)
+
+
 # App Factory
 def create_admin_app() -> Starlette:
 
@@ -1161,6 +1513,7 @@ def create_admin_app() -> Starlette:
         Route("/metrics/prometheus", prometheus_metrics),
         Route("/tools", tools_home),
         Route("/tools/stock", stock_dashboard),
+        Route("/tools/purchases", purchases_dashboard),
         Route("/tools/products/new", quick_new_product, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-existing", bulk_accounts_existing, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-unique", bulk_unique_products, methods=["GET", "POST"]),

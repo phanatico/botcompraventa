@@ -13,7 +13,7 @@ from bot.keyboards import back, payment_menu, close, get_payment_choice
 from bot.logger_mesh import logger
 from bot.database.methods.audit import log_audit
 from bot.misc import EnvKeys, ItemPurchaseRequest, validate_telegram_id, validate_money_amount, PaymentRequest, \
-    sanitize_html
+    sanitize_html, format_dt, format_date, days_left_str
 from bot.handlers.other import is_safe_item_name
 from bot.misc.metrics import get_metrics
 from bot.misc.services import CryptoPayAPI, CryptoPayAPIError, send_stars_invoice, send_fiat_invoice
@@ -560,11 +560,12 @@ async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
                 item_name=purchase_data['item_name'],
                 price=purchase_data['price'],
                 unique_id=purchase_data['unique_id'],
-                datetime=purchase_data['bought_datetime'],
+                datetime=format_dt(purchase_data.get('bought_datetime')),
                 username=username,
                 user_id=call.from_user.id,
                 value=safe_value,
-                expires_at=purchase_data.get('expires_at') or "—",
+                expires_at=format_date(purchase_data.get('expires_at')),
+                days_left=days_left_str(purchase_data.get('expires_at')),
                 currency=EnvKeys.PAY_CURRENCY,
             ),
             parse_mode='HTML',

@@ -22,7 +22,7 @@ from bot.database.methods.audit import log_audit
 from bot.keyboards import item_info, back, lazy_paginated_keyboard
 from bot.keyboards.inline import simple_buttons, rating_keyboard
 from bot.i18n import localize
-from bot.misc import EnvKeys, LazyPaginator
+from bot.misc import EnvKeys, LazyPaginator, format_dt, format_date, days_left_str
 from bot.misc.metrics import get_metrics
 from bot.states import ShopStates
 from bot.states.review_state import ReviewFSM
@@ -630,15 +630,13 @@ async def bought_item_info_callback_handler(call: CallbackQuery):
     text = "\n".join([
         localize("purchases.item.name", name=item["item_name"]),
         localize("purchases.item.price", amount=item["price"], currency=EnvKeys.PAY_CURRENCY),
-        localize("purchases.item.datetime", dt=item["bought_datetime"]),
-        localize("purchases.item.unique_id", uid=item["unique_id"]),
+        localize("purchases.item.datetime", dt=format_dt(item.get("bought_datetime"))),
         f"<b>Estado</b>: <code>{item.get('status', 'active')}</code>",
         f"<b>Duración</b>: <code>{item.get('duration_days', 0)}</code> días",
-        f"<b>Vence</b>: <code>{item.get('expires_at')}</code>",
-        (
-            f"<b>Dias restantes</b>: <code>{max((item['expires_at'] - datetime.now(timezone.utc)).days, 0)}</code>"
-            if item.get("expires_at") else "<b>Dias restantes</b>: <code>—</code>"
-        ),
+        f"<b>Vence</b>: <code>{format_date(item.get('expires_at'))}</code>",
+        f"<b>Días restantes</b>: <code>{days_left_str(item.get('expires_at'))}</code>",
         localize("purchases.item.value", value=item["value"]),
+        "➖➖➖➖➖➖➖➖➖➖➖➖",
+        localize("purchases.item.unique_id", uid=item["unique_id"]),
     ])
     await call.message.edit_text(text, parse_mode='HTML', reply_markup=back(back_data))

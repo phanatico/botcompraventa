@@ -1100,13 +1100,15 @@ TRANSLATIONS["es"] = {
     "shop.purchase.receipt": (
         "✅ Compra realizada correctamente\n"
         "➖➖➖➖➖➖➖➖➖➖➖➖\n"
-        "📃 Producto: {item_name}\n"
-        "💰 Precio: {price} {currency}\n"
-        "💡 Pedido: {unique_id}\n"
-        "🕐 Fecha: {datetime}\n"
-        "👤 Cliente: @{username} ({user_id})\n"
-        "🔚 Vence: {expires_at}\n"
-        "🔑 Acceso:\n<code>{value}</code>"
+        "📃 Producto: <b>{item_name}</b>\n"
+        "💰 Precio: <b>{price} {currency}</b>\n"
+        "� Fecha: <code>{datetime}</code>\n"
+        "� Vence: <code>{expires_at}</code>\n"
+        "⏳ Días restantes: <b>{days_left}</b>\n"
+        "🔑 Acceso:\n<code>{value}</code>\n"
+        "➖➖➖➖➖➖➖➖➖➖➖➖\n"
+        "� Cliente: @{username} ({user_id})\n"
+        "� Pedido: <code>{unique_id}</code>"
     ),
     "purchases.title": "Mis compras:",
     "purchases.item.not_found": "Compra no encontrada",
