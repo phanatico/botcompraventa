@@ -134,24 +134,46 @@ def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse
     .ok {{ color:#166534; font-weight:700; }}
     .muted {{ color:#64748b; }}
     .tabs {{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }}
-    .tabs a {{ padding:8px 14px; border-radius:999px; background:#e2e8f0; color:#0f172a; text-decoration:none; font-weight:600; font-size:14px; }}
-    .tabs a.active {{ background:#1d4ed8; color:white; }}
-    .tabs a .count {{ background:rgba(255,255,255,.25); padding:1px 8px; border-radius:999px; margin-left:6px; font-size:12px; }}
-    .tabs a:not(.active) .count {{ background:#cbd5e1; }}
+    .tabs a {{ padding:8px 16px; border-radius:999px; background:white; color:#0f172a; text-decoration:none; font-weight:700; font-size:13px; border:2px solid #cbd5e1; transition:all .15s; }}
+    .tabs a:hover {{ transform:translateY(-1px); }}
+    .tabs a .count {{ background:#cbd5e1; color:#0f172a; padding:1px 9px; border-radius:999px; margin-left:8px; font-size:12px; font-weight:800; }}
+    .tabs a.t-all.active {{ background:#0ea5e9; border-color:#0ea5e9; color:white; }} .tabs a.t-all.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-active.active {{ background:#16a34a; border-color:#16a34a; color:white; }} .tabs a.t-active.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-expiring.active {{ background:#f59e0b; border-color:#f59e0b; color:white; }} .tabs a.t-expiring.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-expired.active {{ background:#dc2626; border-color:#dc2626; color:white; }} .tabs a.t-expired.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-cancelled.active {{ background:#6b7280; border-color:#6b7280; color:white; }} .tabs a.t-cancelled.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-renewable.active {{ background:#7c3aed; border-color:#7c3aed; color:white; }} .tabs a.t-renewable.active .count {{ background:rgba(255,255,255,.25); color:white; }}
+    .tabs a.t-all {{ border-color:#0ea5e9; color:#0ea5e9; }}
+    .tabs a.t-active {{ border-color:#16a34a; color:#16a34a; }}
+    .tabs a.t-expiring {{ border-color:#f59e0b; color:#b45309; }}
+    .tabs a.t-expired {{ border-color:#dc2626; color:#dc2626; }}
+    .tabs a.t-cancelled {{ border-color:#6b7280; color:#475569; }}
+    .tabs a.t-renewable {{ border-color:#7c3aed; color:#7c3aed; }}
     .filters {{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:10px; }}
     .filters input, .filters select {{ width:auto; min-width:200px; padding:8px 10px; }}
     .filters button {{ margin:0; padding:9px 14px; }}
-    .badge {{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; }}
+    .badge {{ display:inline-block; padding:3px 12px; border-radius:999px; font-size:12px; font-weight:700; }}
     .badge-active {{ background:#dcfce7; color:#166534; }}
     .badge-expired {{ background:#fee2e2; color:#991b1b; }}
     .badge-cancelled {{ background:#e2e8f0; color:#475569; }}
     .badge-expiring {{ background:#fef3c7; color:#92400e; }}
-    .days {{ display:inline-block; min-width:38px; text-align:center; padding:4px 8px; border-radius:999px; font-weight:800; }}
-    .days-ok {{ background:#dcfce7; color:#166534; }}
-    .days-warn {{ background:#fef3c7; color:#92400e; }}
-    .days-bad {{ background:#fee2e2; color:#991b1b; }}
-    table.compact th, table.compact td {{ padding:7px 6px; font-size:13px; }}
+    .day-circle {{ display:inline-flex; align-items:center; justify-content:center; width:42px; height:42px; border-radius:999px; font-weight:800; font-size:14px; color:white; box-shadow:0 2px 6px rgba(15,23,42,.15); }}
+    .day-circle.ok {{ background:linear-gradient(135deg,#22c55e,#16a34a); }}
+    .day-circle.warn {{ background:linear-gradient(135deg,#fbbf24,#f59e0b); }}
+    .day-circle.bad {{ background:linear-gradient(135deg,#ef4444,#dc2626); }}
+    .day-circle.dead {{ background:linear-gradient(135deg,#94a3b8,#64748b); }}
+    .actions {{ display:flex; gap:6px; }}
+    .actions a {{ display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:8px; text-decoration:none; font-size:16px; transition:transform .1s; }}
+    .actions a:hover {{ transform:translateY(-1px); }}
+    .actions .a-renew {{ background:#dbeafe; color:#1d4ed8; }}
+    .actions .a-support {{ background:#fee2e2; color:#dc2626; }}
+    .actions .a-view {{ background:#e0e7ff; color:#4338ca; }}
+    .actions .a-disabled {{ background:#f1f5f9; color:#cbd5e1; cursor:not-allowed; pointer-events:none; }}
+    .header-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }}
+    .header-bar .total-pill {{ background:linear-gradient(135deg,#0ea5e9,#1d4ed8); color:white; padding:8px 18px; border-radius:999px; font-weight:800; font-size:16px; box-shadow:0 4px 14px rgba(29,78,216,.25); }}
+    table.compact th, table.compact td {{ padding:8px 6px; font-size:13px; vertical-align:middle; }}
     table.compact code {{ font-size:12px; }}
+    table.compact tr:hover td {{ background:#f8fafc; }}
     .stock-low td {{ background:#fff7ed; }}
     .stock-empty td {{ background:#fef2f2; }}
   </style>
@@ -1381,16 +1403,16 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
         # Aggregate header stats (always full unfiltered)
         total_revenue = (await s.execute(select(sa_func.sum(BoughtGoods.price)))).scalar() or 0
 
-    def days_class(d: int | None, status: str) -> str:
+    def day_circle_class(d: int | None, status: str, has_expiry: bool) -> str:
         if status == "cancelled":
-            return "days-bad"
-        if d is None:
-            return "days-ok"
-        if d <= 0:
-            return "days-bad"
+            return "dead"
+        if not has_expiry:
+            return "ok"
+        if d is None or d <= 0:
+            return "bad"
         if d <= 7:
-            return "days-warn"
-        return "days-ok"
+            return "warn"
+        return "ok"
 
     def status_badge(p: BoughtGoods, d_left: int | None) -> str:
         if p.status == "cancelled":
@@ -1400,6 +1422,31 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
         if d_left is not None and d_left <= 7:
             return '<span class="badge badge-expiring">Por vencer</span>'
         return '<span class="badge badge-active">Activo</span>'
+
+    def actions_html(p: BoughtGoods, d_left: int | None) -> str:
+        # Renew: only sensible if renewable and (expiring soon or already expired)
+        is_expired_or_soon = (
+            p.status in {"expired", "expiring"}
+            or (d_left is not None and d_left <= 7 and p.expires_at is not None)
+        )
+        if p.is_renewable and is_expired_or_soon and p.status != "cancelled":
+            renew = f'<a class="a-renew" href="/admin/bought-goods/edit/{p.id}" title="Renovar">🔄</a>'
+        else:
+            renew = '<span class="a-renew a-disabled" title="No renovable" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;background:#f1f5f9;color:#cbd5e1">🔄</span>'
+
+        # Support: WhatsApp first, then email, else view buyer in admin
+        if p.buyer_whatsapp_snapshot:
+            wa = "".join(c for c in p.buyer_whatsapp_snapshot if c.isdigit())
+            support = f'<a class="a-support" href="https://wa.me/{wa}" target="_blank" title="WhatsApp">💬</a>'
+        elif p.buyer_email_snapshot:
+            support = f'<a class="a-support" href="mailto:{escape(p.buyer_email_snapshot)}" title="Email">📧</a>'
+        elif p.buyer_id:
+            support = f'<a class="a-support" href="https://t.me/{p.buyer_id}" target="_blank" title="Telegram">✈️</a>'
+        else:
+            support = '<span class="a-support a-disabled" title="Sin contacto" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;background:#f1f5f9;color:#cbd5e1">💬</span>'
+
+        view = f'<a class="a-view" href="/admin/bought-goods/details/{p.id}" title="Ver detalle">👁</a>'
+        return f'<div class="actions">{renew}{support}{view}</div>'
 
     rows_html_parts: list[str] = []
     for p in purchases:
@@ -1421,7 +1468,8 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
         cuenta_user = escape(p.stock_username) if p.stock_username else '<span class="muted">—</span>'
         cuenta_url = f'<a href="{escape(p.stock_url)}" target="_blank">{escape(p.stock_url)}</a>' if p.stock_url else '<span class="muted">—</span>'
         days_str = days_left_str(p.expires_at)
-        days_chip = f'<span class="days {days_class(d_left, p.status)}">{days_str}</span>'
+        d_class = day_circle_class(d_left, p.status, p.expires_at is not None)
+        days_chip = f'<span class="day-circle {d_class}">{days_str}</span>'
 
         rows_html_parts.append(
             "<tr>"
@@ -1431,20 +1479,22 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
             f"<td>{contact_html}</td>"
             f"<td>{cuenta_user}</td>"
             f"<td style='max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{cuenta_url}</td>"
-            f"<td>{p.price}</td>"
+            f"<td><b>{p.price}</b></td>"
             f"<td>{escape(format_dt(p.bought_datetime))}</td>"
             f"<td>{escape(format_date(p.expires_at))}</td>"
-            f"<td>{days_chip}</td>"
+            f"<td style='text-align:center'>{days_chip}</td>"
             f"<td>{status_badge(p, d_left)}</td>"
             f"<td><code>{p.unique_id}</code></td>"
+            f"<td>{actions_html(p, d_left)}</td>"
             "</tr>"
         )
-    rows_html = "".join(rows_html_parts) or "<tr><td colspan='12' class='muted'>No hay compras que coincidan con el filtro.</td></tr>"
+    rows_html = "".join(rows_html_parts) or "<tr><td colspan='13' class='muted'>No hay compras que coincidan con el filtro.</td></tr>"
 
     def tab_link(label: str, key: str, count: int) -> str:
-        active_cls = "active" if tab == key or (key == "all" and tab not in {"active", "expiring", "expired", "cancelled", "renewable"}) else ""
+        is_active = tab == key or (key == "all" and tab not in {"active", "expiring", "expired", "cancelled", "renewable"})
+        active_cls = "active" if is_active else ""
         href = f"/tools/purchases?tab={key}&q={escape(q)}"
-        return f'<a class="{active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
+        return f'<a class="t-{key} {active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
 
     tabs_html = (
         '<div class="tabs">'
@@ -1468,15 +1518,17 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     pagination_html = ' &nbsp; '.join(pagination_parts)
 
     body = f"""
-    <p>Vista de <b>todas las compras</b> con dias restantes, cliente, cuenta entregada y estado en tiempo real.
-    Las tabs filtran por estado, la barra busca por producto, cliente, email, whatsapp, usuario de cuenta, ID Telegram o pedido.</p>
-    <p class="hint"><b>Total facturado historico</b>: {total_revenue} {EnvKeys.PAY_CURRENCY}</p>
+    <div class="header-bar">
+      <span class="total-pill">💰 ${total_revenue} {EnvKeys.PAY_CURRENCY}</span>
+      <span class="muted">Mostrando {len(purchases)} compras en la pagina actual.</span>
+    </div>
+    <p class="hint">Filtra por estado con las pills de arriba o usa la barra para buscar por producto, cliente, email, WhatsApp, ID Telegram o pedido. La columna <b>Dias</b> muestra el tiempo restante con codigo de color.</p>
     {tabs_html}
     <form method="get" class="filters">
       <input type="hidden" name="tab" value="{escape(tab)}">
-      <input type="text" name="q" placeholder="Buscar producto, cliente, email, whatsapp, ID Telegram, pedido..." value="{escape(q)}" style="min-width:360px">
+      <input type="text" name="q" placeholder="🔍 Buscar producto, cliente, email, whatsapp, ID Telegram, pedido..." value="{escape(q)}" style="min-width:380px">
       <button type="submit">Buscar</button>
-      <a href="/tools/purchases?tab={escape(tab)}" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
+      <a href="/tools/purchases?tab={escape(tab)}" style="margin-left:6px;color:#475569;text-decoration:none;align-self:center">Limpiar</a>
     </form>
     <table class="compact">
       <thead>
@@ -1490,16 +1542,17 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
           <th>Precio</th>
           <th>Fecha de inicio</th>
           <th>Vence</th>
-          <th>Dias</th>
+          <th style="text-align:center">Dias</th>
           <th>Estado</th>
           <th>Pedido</th>
+          <th>Opciones</th>
         </tr>
       </thead>
       <tbody>{rows_html}</tbody>
     </table>
     <div style="margin-top:14px;display:flex;gap:14px;align-items:center">{pagination_html}</div>
     """
-    return _render_tools_page("🛒 Mis Compras", body)
+    return _render_tools_page(f"🛒 Mis Compras", body)
 
 
 # App Factory
