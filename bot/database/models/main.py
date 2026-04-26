@@ -155,6 +155,12 @@ class Categories(Database.BASE):
         if name is not None:
             self.name = name
 
+    def __str__(self) -> str:
+        return self.name or f"Categoria #{self.id}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
 
 class Goods(Database.BASE):
     __tablename__ = 'goods'
@@ -184,6 +190,12 @@ class Goods(Database.BASE):
         self.is_active = is_active
         if category_id is not None:
             self.category_id = category_id
+
+    def __str__(self) -> str:
+        return self.name or f"Producto #{self.id}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 class ItemValues(Database.BASE):

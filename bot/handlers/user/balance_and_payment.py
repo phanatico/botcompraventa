@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.database.methods import get_user_referral, buy_item_transaction, process_payment_with_referral, create_pending_payment
+from bot.database.methods.read import get_item_info_cached
 from bot.keyboards import back, payment_menu, close, get_payment_choice
 from bot.logger_mesh import logger
 from bot.database.methods.audit import log_audit
@@ -414,8 +415,52 @@ async def successful_payment_handler(message: Message):
 
 
 @router.callback_query(F.data == "buy")
+async def buy_item_confirm_callback_handler(call: CallbackQuery, state: FSMContext):
+    """Show a confirmation step before charging the user's balance."""
+    data = await state.get_data()
+    item_name = data.get('csrf_item')
+
+    if not item_name:
+        await call.answer(localize("middleware.security.invalid_csrf"), show_alert=True)
+        return
+
+    item_info = await get_item_info_cached(item_name)
+    if not item_info:
+        await call.answer(localize("shop.item.not_found"), show_alert=True)
+        return
+
+    price = Decimal(str(item_info["price"]))
+    promo_code = data.get('applied_promo')
+
+    if promo_code:
+        promo_data = data.get('applied_promo_data', {})
+        if promo_data.get('discount_type') == 'percent':
+            discount = price * Decimal(str(promo_data.get('discount_value', 0))) / 100
+        else:
+            discount = min(Decimal(str(promo_data.get('discount_value', 0))), price)
+        price = (price - discount).quantize(Decimal("0.01"))
+
+    from bot.keyboards.inline import simple_buttons
+    buttons = [
+        (localize("btn.yes"), "buy_execute"),
+        (localize("btn.no"), "back_to_item"),
+    ]
+
+    await call.message.edit_text(
+        localize(
+            "shop.purchase.confirm",
+            item_name=item_name,
+            price=price,
+            currency=EnvKeys.PAY_CURRENCY,
+        ),
+        reply_markup=simple_buttons(buttons, per_row=2),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "buy_execute")
 async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
-    """Processing the purchase of goods with full transactional security."""
+    """Process the purchase after explicit confirmation."""
     try:
         # Get item name from state (stored when viewing item info)
         data = await state.get_data()
@@ -515,6 +560,7 @@ async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
                 username=username,
                 user_id=call.from_user.id,
                 value=safe_value,
+                expires_at=purchase_data.get('expires_at') or "—",
                 currency=EnvKeys.PAY_CURRENCY,
             ),
             parse_mode='HTML',

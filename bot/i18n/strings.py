@@ -980,6 +980,12 @@ ES_OVERRIDES = {
     "btn.remove_promo": "Quitar promo",
     "btn.redeem_promo": "Canjear promo",
     "btn.admin.change_telegram_id": "Cambiar ID Telegram",
+    "shop.purchase.confirm": (
+        "⚠️ <b>Confirmar compra</b>\n"
+        "Vas a comprar <b>{item_name}</b>.\n"
+        "Se te va a descontar <b>{price} {currency}</b> del saldo.\n\n"
+        "¿Seguro que quieres continuar?"
+    ),
     "admin.promo.title": "<b>Gestion de promociones</b>",
     "admin.promo.create": "Crear promocion",
     "admin.promo.list_empty": "Todavia no hay promociones.",

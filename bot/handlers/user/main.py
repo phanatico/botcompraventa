@@ -100,11 +100,11 @@ async def back_to_menu_callback_handler(call: CallbackQuery, state: FSMContext):
         )
         user = await check_user_cached(user_id)
 
-    role_id = user.get('role_id')
+    role_permissions = await check_role(user_id)
 
     channel_username = _parse_channel_username()
 
-    markup = main_menu(role=role_id, channel=channel_username, helper=EnvKeys.HELPER_ID)
+    markup = main_menu(role=role_permissions, channel=channel_username, helper=EnvKeys.HELPER_ID)
     await call.message.edit_text(localize("menu.title"), reply_markup=markup)
     await state.clear()
 
@@ -168,8 +168,8 @@ async def check_sub_to_channel(call: CallbackQuery, state: FSMContext):
         chat_member = await call.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         if await check_sub_channel(chat_member):
             user = await check_user_cached(user_id)
-            role_id = user.get('role_id')
-            markup = main_menu(role_id, channel_username, helper)
+            role_permissions = await check_role(user_id)
+            markup = main_menu(role_permissions, channel_username, helper)
             await call.message.edit_text(localize("menu.title"), reply_markup=markup)
             await state.clear()
             return
@@ -237,4 +237,3 @@ async def _show_operations_page(call: CallbackQuery, state: FSMContext, user_id:
     kb.row(InlineKeyboardButton(text=localize("btn.back"), callback_data="profile"))
 
     await call.message.edit_text("\n".join(lines), reply_markup=kb.as_markup())
-
