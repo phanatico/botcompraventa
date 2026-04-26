@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from typing import Any
 
-from sqladmin import Admin, ModelView
+from sqladmin import Admin, ModelView, BaseView, expose
 from sqladmin.authentication import AuthenticationBackend
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -1555,6 +1555,52 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     return _render_tools_page(f"🛒 Mis Compras", body)
 
 
+class MisComprasSidebar(BaseView):
+    """Sidebar entry that takes the admin to the rich /tools/purchases dashboard."""
+    name = "🛒 Mis Compras"
+    icon = "fa-solid fa-cart-shopping"
+
+    @expose("/mis-compras", methods=["GET"])
+    async def index(self, request: Request):
+        return RedirectResponse("/tools/purchases", status_code=302)
+
+
+class StockSidebar(BaseView):
+    name = "📦 Stock"
+    icon = "fa-solid fa-warehouse"
+
+    @expose("/stock-dashboard", methods=["GET"])
+    async def index(self, request: Request):
+        return RedirectResponse("/tools/stock", status_code=302)
+
+
+class HerramientasSidebar(BaseView):
+    name = "🛠 Herramientas"
+    icon = "fa-solid fa-toolbox"
+
+    @expose("/herramientas", methods=["GET"])
+    async def index(self, request: Request):
+        return RedirectResponse("/tools", status_code=302)
+
+
+class BulkUniqueSidebar(BaseView):
+    name = "⚡ Bulk productos unicos"
+    icon = "fa-solid fa-bolt"
+
+    @expose("/bulk-unique", methods=["GET"])
+    async def index(self, request: Request):
+        return RedirectResponse("/tools/cuentas/bulk-unique", status_code=302)
+
+
+class BulkAccountsSidebar(BaseView):
+    name = "🧾 Bulk cuentas"
+    icon = "fa-solid fa-layer-group"
+
+    @expose("/bulk-cuentas", methods=["GET"])
+    async def index(self, request: Request):
+        return RedirectResponse("/tools/cuentas/bulk-existing", status_code=302)
+
+
 # App Factory
 def create_admin_app() -> Starlette:
 
@@ -1582,6 +1628,13 @@ def create_admin_app() -> Starlette:
         authentication_backend=auth_backend,
         title="Telegram Shop Admin",
     )
+
+    # Custom sidebar shortcuts (top of the menu) to the /tools/* dashboards.
+    admin.add_view(MisComprasSidebar)
+    admin.add_view(StockSidebar)
+    admin.add_view(HerramientasSidebar)
+    admin.add_view(BulkUniqueSidebar)
+    admin.add_view(BulkAccountsSidebar)
 
     admin.add_view(UserAdmin)
     admin.add_view(RoleAdmin)
