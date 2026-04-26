@@ -108,6 +108,18 @@ def _parse_bulk_unique_lines(raw: str, base_name: str) -> tuple[list[dict[str, s
 
 def _render_tools_page(title: str, body: str, message: str = "", embedded: bool = False) -> HTMLResponse:
     notice = f"<div style='padding:12px 14px;margin:0 0 16px;border-radius:8px;background:#eef6ff;border:1px solid #bfdbfe'>{escape(message)}</div>" if message else ""
+    # Floating back-to-admin button — visible in every mode. In iframe (embedded),
+    # target=_top makes it navigate the parent window so the user truly returns
+    # to the old SQLAdmin panel instead of just reloading inside the iframe.
+    back_target = ' target="_top"' if embedded else ""
+    back_button = (
+        f'<a href="/admin"{back_target} '
+        'style="position:fixed;top:14px;right:14px;z-index:9999;'
+        'background:linear-gradient(135deg,#1d4ed8,#0ea5e9);color:white;'
+        'padding:10px 16px;border-radius:999px;text-decoration:none;'
+        'font-weight:700;font-size:13px;box-shadow:0 6px 20px rgba(15,23,42,.25)">'
+        '← Panel principal</a>'
+    )
     nav_block = "" if embedded else """
     <div class="nav">
       <a href="/admin">Volver al panel</a>
@@ -196,6 +208,7 @@ def _render_tools_page(title: str, body: str, message: str = "", embedded: bool 
   </style>
 </head>
 <body>
+  {back_button}
   <div class="wrap">
     {nav_block}
     <h1>{escape(title)}</h1>
@@ -1577,14 +1590,30 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
 
 
 def _embed(view: "BaseView", request: Request, target_url: str, title: str):
-    """Render the /tools/* page inside the SQLAdmin layout (sidebar visible)."""
+    """Render the /tools/* page inside the SQLAdmin layout (sidebar visible).
+
+    Falls back to a plain redirect if the template cannot be rendered.
+    """
     sep = "&" if "?" in target_url else "?"
     embed_url = f"{target_url}{sep}embed=1"
-    return view.templates.TemplateResponse(
-        request,
-        "sqladmin/embed.html",
-        {"embed_url": embed_url, "embed_title": title},
-    )
+    context = {"embed_url": embed_url, "embed_title": title}
+    try:
+        return view.templates.TemplateResponse(
+            request, "sqladmin/embed.html", context,
+        )
+    except TypeError:
+        # Older Starlette signature: TemplateResponse(name, context)
+        try:
+            return view.templates.TemplateResponse(
+                "sqladmin/embed.html",
+                {"request": request, **context},
+            )
+        except Exception:
+            return RedirectResponse(target_url, status_code=302)
+    except Exception:
+        # If the embed template cannot resolve sqladmin/layout.html context,
+        # at least redirect so the user still reaches the new dashboard.
+        return RedirectResponse(target_url, status_code=302)
 
 
 class MisComprasSidebar(BaseView):
