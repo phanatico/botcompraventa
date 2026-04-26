@@ -98,6 +98,8 @@ class User(Database.BASE):
     role_id = Column(Integer, ForeignKey('roles.id', ondelete="RESTRICT"), default=1, index=True)
     username = Column(String(64), nullable=True, index=True)
     first_name = Column(String(128), nullable=True)
+    email = Column(String(255), nullable=True, index=True)
+    whatsapp = Column(String(32), nullable=True, index=True)
     balance = Column(Numeric(12, 2), nullable=False, default=0)
     referral_id = Column(BigInteger, ForeignKey('users.telegram_id', ondelete="SET NULL"), nullable=True, index=True)
     registration_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -126,7 +128,7 @@ class User(Database.BASE):
 
     def __init__(self, telegram_id: int | None = None, registration_date: datetime.datetime | None = None,
                  balance=0, referral_id=None, role_id: int = 1, username: str | None = None,
-                 first_name: str | None = None,
+                 first_name: str | None = None, email: str | None = None, whatsapp: str | None = None,
                  is_customer_active: bool = False, **kw: Any):
         super().__init__(**kw)
         if telegram_id is not None:
@@ -136,6 +138,10 @@ class User(Database.BASE):
             self.username = username
         if first_name is not None:
             self.first_name = first_name
+        if email is not None:
+            self.email = email
+        if whatsapp is not None:
+            self.whatsapp = whatsapp
         self.balance = balance
         if referral_id is not None:
             self.referral_id = referral_id
@@ -237,6 +243,13 @@ class ItemValues(Database.BASE):
         if assigned_user_id is not None:
             self.assigned_user_id = assigned_user_id
 
+    def __str__(self) -> str:
+        username = self.account_username or "sin-usuario"
+        return f"Cuenta #{self.id} - {username}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
 
 class BoughtGoods(Database.BASE):
     __tablename__ = 'bought_goods'
@@ -246,6 +259,10 @@ class BoughtGoods(Database.BASE):
     stock_username = Column(String(255), nullable=True)
     stock_password = Column(String(255), nullable=True)
     stock_url = Column(String(500), nullable=True)
+    buyer_username_snapshot = Column(String(64), nullable=True, index=True)
+    buyer_first_name_snapshot = Column(String(128), nullable=True)
+    buyer_email_snapshot = Column(String(255), nullable=True, index=True)
+    buyer_whatsapp_snapshot = Column(String(32), nullable=True, index=True)
     price = Column(Numeric(12, 2), nullable=False)
     buyer_id = Column(BigInteger, ForeignKey('users.telegram_id', ondelete="SET NULL"), nullable=True, index=True)
     bought_datetime = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -268,7 +285,9 @@ class BoughtGoods(Database.BASE):
                  unique_id=None, buyer_id: int = 0, starts_at=None, expires_at=None, duration_days: int = 0,
                  status: str = "active",
                  is_renewable: bool = False, stock_username: str | None = None,
-                 stock_password: str | None = None, stock_url: str | None = None, **kw: Any):
+                 stock_password: str | None = None, stock_url: str | None = None,
+                 buyer_username_snapshot: str | None = None, buyer_first_name_snapshot: str | None = None,
+                 buyer_email_snapshot: str | None = None, buyer_whatsapp_snapshot: str | None = None, **kw: Any):
         super().__init__(**kw)
         if name is not None:
             self.item_name = name
@@ -280,6 +299,14 @@ class BoughtGoods(Database.BASE):
             self.stock_password = stock_password
         if stock_url is not None:
             self.stock_url = stock_url
+        if buyer_username_snapshot is not None:
+            self.buyer_username_snapshot = buyer_username_snapshot
+        if buyer_first_name_snapshot is not None:
+            self.buyer_first_name_snapshot = buyer_first_name_snapshot
+        if buyer_email_snapshot is not None:
+            self.buyer_email_snapshot = buyer_email_snapshot
+        if buyer_whatsapp_snapshot is not None:
+            self.buyer_whatsapp_snapshot = buyer_whatsapp_snapshot
         if price is not None:
             self.price = price
         self.buyer_id = buyer_id

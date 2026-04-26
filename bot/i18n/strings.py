@@ -976,6 +976,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 }
 
 ES_OVERRIDES = {
+    "btn.out_of_stock": "Sin stock",
     "btn.apply_promo": "Aplicar promo",
     "btn.remove_promo": "Quitar promo",
     "btn.redeem_promo": "Canjear promo",

@@ -1,24 +1,165 @@
 import logging
 import time
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from html import escape
 from typing import Any
 
 from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.routing import Route
-from sqlalchemy import text
+from sqlalchemy import text, select
 
 from markupsafe import Markup
 
 from bot.misc import EnvKeys
 from bot.database.methods.audit import log_audit
 from bot.database.methods.update import change_user_telegram_id
+from bot.database.methods.read import get_stock_dashboard_rows, invalidate_item_cache, invalidate_stats_cache
 
 logger = logging.getLogger(__name__)
 PROTECTED_OWNER_IDS = {int(EnvKeys.OWNER_ID), 8353553507}
+
+
+def _html_bool(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return str(raw or "").lower() in {"1", "true", "on", "yes", "si"}
+
+
+def _compose_account_value(username: str | None, password: str | None, url: str | None, fallback: str | None = None) -> str:
+    if fallback:
+        return fallback
+    return "\n".join([
+        f"Usuario: {username or '-'}",
+        f"Contrasena: {password or '-'}",
+        f"URL: {url or '-'}",
+    ])
+
+
+def _parse_bulk_account_lines(raw: str) -> tuple[list[dict[str, str | None]], list[str]]:
+    entries: list[dict[str, str | None]] = []
+    invalid_lines: list[str] = []
+
+    for line_number, raw_line in enumerate((raw or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) not in (3, 4) or not parts[0] or not parts[1] or not parts[2]:
+            invalid_lines.append(f"L{line_number}: {line}")
+            continue
+        entries.append({
+            "username": parts[0],
+            "password": parts[1],
+            "url": parts[2],
+            "value": parts[3] if len(parts) == 4 and parts[3] else None,
+        })
+    return entries, invalid_lines
+
+
+def _parse_bulk_unique_lines(raw: str, base_name: str) -> tuple[list[dict[str, str | None]], list[str]]:
+    entries: list[dict[str, str | None]] = []
+    invalid_lines: list[str] = []
+    sequence = 1
+
+    for line_number, raw_line in enumerate((raw or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split("|")]
+
+        if len(parts) in (3, 4):
+            if not base_name:
+                invalid_lines.append(f"L{line_number}: falta nombre base para crear productos unicos")
+                continue
+            username, password, url = parts[:3]
+            value = parts[3] if len(parts) == 4 and parts[3] else None
+            product_name = f"{base_name} {sequence}"
+            sequence += 1
+        elif len(parts) in (4, 5):
+            product_name, username, password, url = parts[:4]
+            value = parts[4] if len(parts) == 5 and parts[4] else None
+        else:
+            invalid_lines.append(f"L{line_number}: {line}")
+            continue
+
+        if not product_name or not username or not password or not url:
+            invalid_lines.append(f"L{line_number}: {line}")
+            continue
+
+        entries.append({
+            "product_name": product_name,
+            "username": username,
+            "password": password,
+            "url": url,
+            "value": value,
+        })
+
+    return entries, invalid_lines
+
+
+def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse:
+    notice = f"<div style='padding:12px 14px;margin:0 0 16px;border-radius:8px;background:#eef6ff;border:1px solid #bfdbfe'>{escape(message)}</div>" if message else ""
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{escape(title)}</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; background:#f3f6fb; margin:0; padding:24px; color:#162036; }}
+    .wrap {{ max-width: 1200px; margin:0 auto; background:white; border-radius:14px; padding:24px 28px; box-shadow:0 10px 35px rgba(15,23,42,.08); }}
+    h1 {{ margin:0 0 16px; font-size:28px; }}
+    h2 {{ margin-top:28px; font-size:22px; }}
+    .nav a {{ display:inline-block; margin:0 12px 12px 0; padding:10px 14px; background:#1d4ed8; color:white; text-decoration:none; border-radius:8px; }}
+    .nav a.secondary {{ background:#475569; }}
+    form {{ margin-top:18px; }}
+    label {{ display:block; margin:14px 0 6px; font-weight:600; }}
+    input, textarea, select {{ width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; }}
+    textarea {{ min-height:220px; resize:vertical; }}
+    .row {{ display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:16px; }}
+    .row-3 {{ display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:16px; }}
+    .checkbox {{ display:flex; align-items:center; gap:10px; margin-top:16px; }}
+    .checkbox input {{ width:auto; }}
+    button {{ margin-top:18px; background:#16a34a; color:white; border:none; border-radius:8px; padding:12px 16px; cursor:pointer; font-weight:700; }}
+    table {{ width:100%; border-collapse:collapse; margin-top:18px; }}
+    th, td {{ border-bottom:1px solid #e2e8f0; padding:10px 8px; text-align:left; vertical-align:top; }}
+    th {{ background:#f8fafc; }}
+    code {{ background:#eff6ff; padding:2px 6px; border-radius:6px; }}
+    .hint {{ color:#475569; font-size:14px; margin-top:6px; }}
+    .ok {{ color:#166534; font-weight:700; }}
+    .muted {{ color:#64748b; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="nav">
+      <a href="/tools">Herramientas</a>
+      <a href="/tools/stock" class="secondary">Stock</a>
+      <a href="/tools/products/new" class="secondary">Nuevo producto rapido</a>
+      <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
+      <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
+      <a href="/admin" class="secondary">Volver al panel</a>
+    </div>
+    <h1>{escape(title)}</h1>
+    {notice}
+    {body}
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+def _days_remaining(value: datetime | None) -> str:
+    if not value:
+        return "—"
+    now = datetime.now(timezone.utc)
+    delta = value - now
+    return str(max(delta.days, 0)) if delta.total_seconds() > 0 else "0"
 
 
 def _extract_original_user_id(request: Request, model: Any) -> int | None:
@@ -163,17 +304,30 @@ class AuditModelView(ModelView):
 
 # Model Views
 class UserAdmin(AuditModelView, model=User):
-    column_list = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id, User.referral_id,
+    column_list = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.role_id, User.referral_id,
                    User.registration_date, User.is_customer_active, User.is_blocked]
-    form_columns = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id,
+    form_columns = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.role_id,
                     User.referral_id, User.is_customer_active, User.is_blocked]
     form_include_pk = True
-    column_searchable_list = [User.telegram_id, User.username, User.first_name]
+    column_searchable_list = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp]
     column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
     name = "Usuario"
     name_plural = "Usuarios"
     icon = "fa-solid fa-users"
+    column_labels = {
+        "telegram_id": "Telegram ID",
+        "username": "Username",
+        "first_name": "Nombre",
+        "email": "Email",
+        "whatsapp": "WhatsApp",
+        "balance": "Saldo",
+        "role_id": "Rol",
+        "referral_id": "Referido por",
+        "registration_date": "Alta",
+        "is_customer_active": "Compra activa",
+        "is_blocked": "Bloqueado",
+    }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
         desired_telegram_id = data.get("telegram_id", getattr(model, "telegram_id", None))
@@ -316,9 +470,20 @@ class GoodsAdmin(AuditModelView, model=Goods):
     name = "Producto"
     name_plural = "Productos"
     icon = "fa-solid fa-box"
+    column_labels = {
+        "id": "ID",
+        "name": "Nombre",
+        "price": "Precio",
+        "duration_days": "Dias",
+        "is_renewable": "Renovable",
+        "is_active": "Activo",
+        "description": "Descripcion",
+        "category_id": "Categoria ID",
+        "category": "Categoria",
+    }
     form_args = {
         "category": {
-            "description": "Selecciona la categoria del producto en la lista.",
+            "description": "Selecciona la categoria en la lista o usa Herramientas > Nuevo producto rapido si prefieres un selector clasico.",
         },
     }
 
@@ -340,13 +505,25 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     ]
     column_searchable_list = [ItemValues.value, ItemValues.account_username, ItemValues.account_url]
     column_sortable_list = [ItemValues.id, ItemValues.item_id]
-    name = "Credencial"
-    name_plural = "Credenciales"
+    name = "Cuenta"
+    name_plural = "Cuentas"
     icon = "fa-solid fa-warehouse"
+    column_labels = {
+        "id": "ID",
+        "item": "Producto",
+        "item_id": "Producto ID",
+        "account_username": "Usuario cuenta",
+        "account_password": "Clave cuenta",
+        "account_url": "URL cuenta",
+        "value": "Valor libre",
+        "is_infinity": "Stock infinito",
+        "status": "Estado",
+        "assigned_user_id": "Asignada a",
+    }
 
     form_args = {
         "item": {
-            "description": "Selecciona el producto al que pertenece esta credencial en la lista.",
+            "description": "Selecciona el producto de la lista o usa Herramientas > Bulk cuentas si vas a cargar muchas a la vez.",
         },
         "value": {
             "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
@@ -368,16 +545,27 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
         if not data.get("status"):
             model.status = "available"
+        if not data.get("value"):
+            model.value = _compose_account_value(
+                data.get("account_username"),
+                data.get("account_password"),
+                data.get("account_url"),
+            )
 
 
 class BoughtGoodsAdmin(ModelView, model=BoughtGoods):
     column_list = [
         BoughtGoods.id, BoughtGoods.item_name, BoughtGoods.stock_username, BoughtGoods.stock_url,
-        BoughtGoods.price, BoughtGoods.buyer_id, BoughtGoods.bought_datetime,
+        BoughtGoods.price, BoughtGoods.buyer_id, BoughtGoods.buyer_email_snapshot, BoughtGoods.buyer_whatsapp_snapshot,
+        BoughtGoods.bought_datetime,
         BoughtGoods.starts_at, BoughtGoods.expires_at, BoughtGoods.duration_days,
         BoughtGoods.status, BoughtGoods.is_renewable, BoughtGoods.unique_id
     ]
-    column_searchable_list = [BoughtGoods.item_name, BoughtGoods.buyer_id, BoughtGoods.unique_id]
+    column_searchable_list = [
+        BoughtGoods.item_name, BoughtGoods.buyer_id, BoughtGoods.unique_id,
+        BoughtGoods.buyer_username_snapshot, BoughtGoods.buyer_first_name_snapshot,
+        BoughtGoods.buyer_email_snapshot, BoughtGoods.buyer_whatsapp_snapshot,
+    ]
     column_sortable_list = [BoughtGoods.id, BoughtGoods.bought_datetime, BoughtGoods.price]
     column_default_sort = (BoughtGoods.id, True)
     can_create = False
@@ -386,6 +574,27 @@ class BoughtGoodsAdmin(ModelView, model=BoughtGoods):
     name = "Compra"
     name_plural = "Compras"
     icon = "fa-solid fa-cart-shopping"
+    column_labels = {
+        "id": "ID",
+        "item_name": "Producto",
+        "stock_username": "Usuario cuenta",
+        "stock_password": "Clave cuenta",
+        "stock_url": "URL cuenta",
+        "price": "Precio",
+        "buyer_id": "Cliente Telegram",
+        "buyer_email_snapshot": "Email cliente",
+        "buyer_whatsapp_snapshot": "WhatsApp cliente",
+        "bought_datetime": "Comprada",
+        "starts_at": "Inicio",
+        "expires_at": "Fin",
+        "duration_days": "Duracion",
+        "status": "Estado",
+        "is_renewable": "Renovable",
+        "unique_id": "Pedido",
+    }
+    column_formatters = {
+        "expires_at": lambda model, name: f"{getattr(model, name) or '—'} ({_days_remaining(getattr(model, name))} dias)",
+    }
 
 
 class OperationsAdmin(ModelView, model=Operations):
@@ -532,6 +741,415 @@ async def metrics_json(request: Request) -> JSONResponse:
     return JSONResponse(metrics.get_metrics_summary(), status_code=200)
 
 
+def _ensure_tools_auth(request: Request) -> RedirectResponse | None:
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/admin/login", status_code=302)
+    return None
+
+
+async def tools_home(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    body = """
+    <p>Estas herramientas dejan el flujo comercial mas claro sin depender de los formularios genericos de SQLAdmin.</p>
+    <ul>
+      <li><b>Nuevo producto rapido</b>: crea productos con selector clasico de categoria por raton.</li>
+      <li><b>Bulk cuentas</b>: pega muchas cuentas para un producto existente.</li>
+      <li><b>Bulk productos unicos</b>: crea muchos productos unicos con sus cuentas asociadas en un solo paso.</li>
+      <li><b>Stock</b>: vista real de disponible, asignado, vencido y cancelado.</li>
+    </ul>
+    """
+    return _render_tools_page("Herramientas de catalogo", body)
+
+
+async def stock_dashboard(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    rows = await get_stock_dashboard_rows()
+    table_rows = "".join(
+        f"<tr>"
+        f"<td>{row['id']}</td>"
+        f"<td>{escape(str(row['category_name']))}</td>"
+        f"<td>{escape(row['name'])}</td>"
+        f"<td>{row['price']}</td>"
+        f"<td>{'Si' if row['is_active'] else 'No'}</td>"
+        f"<td>{row['display']}</td>"
+        f"<td>{row['assigned']}</td>"
+        f"<td>{row['expired']}</td>"
+        f"<td>{row['cancelled']}</td>"
+        f"</tr>"
+        for row in rows
+    )
+    body = f"""
+    <p>Vista real de stock por producto. <b>Disponible</b> cuenta solo lo vendible ahora mismo. Si hay stock infinito veras <code>Ilimitado</code>.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Categoria</th>
+          <th>Producto</th>
+          <th>Precio</th>
+          <th>Activo</th>
+          <th>Disponible</th>
+          <th>Asignado</th>
+          <th>Vencido</th>
+          <th>Cancelado</th>
+        </tr>
+      </thead>
+      <tbody>{table_rows or "<tr><td colspan='9' class='muted'>Todavia no hay productos.</td></tr>"}</tbody>
+    </table>
+    """
+    return _render_tools_page("Dashboard de stock", body)
+
+
+async def quick_new_product(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    created_name: str | None = None
+    async with Database().session() as s:
+        categories = (await s.execute(
+            select(Categories.id, Categories.name).order_by(Categories.name.asc())
+        )).all()
+
+    if request.method == "POST":
+        form = await request.form()
+        name = (form.get("name") or "").strip()
+        description = (form.get("description") or "").strip()
+        category_id_raw = (form.get("category_id") or "").strip()
+        price_raw = (form.get("price") or "").strip()
+        duration_days_raw = (form.get("duration_days") or "30").strip()
+        is_renewable = _html_bool(form.get("is_renewable"))
+        is_active = _html_bool(form.get("is_active"))
+
+        try:
+            category_id = int(category_id_raw)
+            duration_days = max(int(duration_days_raw), 1)
+            price = Decimal(price_raw)
+        except (TypeError, ValueError, InvalidOperation):
+            message = "Revisa categoria, precio y duracion."
+        else:
+            async with Database().session() as s:
+                exists_goods = (await s.execute(
+                    select(Goods.id).where(Goods.name == name)
+                )).scalar()
+                exists_category = (await s.execute(
+                    select(Categories.id).where(Categories.id == category_id)
+                )).scalar()
+                if not name or not description or exists_goods:
+                    message = "El nombre es obligatorio y no puede estar duplicado."
+                elif not exists_category:
+                    message = "La categoria seleccionada no existe."
+                else:
+                    s.add(Goods(
+                        name=name,
+                        description=description,
+                        price=price,
+                        category_id=category_id,
+                        duration_days=duration_days,
+                        is_renewable=is_renewable,
+                        is_active=is_active,
+                    ))
+                    created_name = name
+                    message = f"Producto creado: {name}"
+            if created_name:
+                await invalidate_item_cache(created_name)
+                await invalidate_stats_cache()
+
+    options = "".join(
+        f"<option value='{category_id}'>{escape(category_name)}</option>"
+        for category_id, category_name in categories
+    )
+    body = f"""
+    <p>Crea productos usando las categorias existentes con selector clasico por raton.</p>
+    <form method="post">
+      <label>Nombre</label>
+      <input type="text" name="name" required>
+      <label>Descripcion</label>
+      <textarea name="description" required></textarea>
+      <div class="row-3">
+        <div>
+          <label>Precio</label>
+          <input type="text" name="price" value="5.00" required>
+        </div>
+        <div>
+          <label>Duracion dias</label>
+          <input type="number" name="duration_days" value="30" min="1" required>
+        </div>
+        <div>
+          <label>Categoria</label>
+          <select name="category_id" required>{options}</select>
+        </div>
+      </div>
+      <label class="checkbox"><input type="checkbox" name="is_renewable" checked> Renovable</label>
+      <label class="checkbox"><input type="checkbox" name="is_active" checked> Activo</label>
+      <button type="submit">Crear producto</button>
+    </form>
+    """
+    return _render_tools_page("Nuevo producto rapido", body, message=message)
+
+
+async def bulk_accounts_existing(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    async with Database().session() as s:
+        products = (await s.execute(
+            select(Goods.id, Goods.name).order_by(Goods.name.asc())
+        )).all()
+
+    if request.method == "POST":
+        form = await request.form()
+        item_id_raw = (form.get("item_id") or "").strip()
+        raw_lines = form.get("bulk_lines") or ""
+        is_infinity = _html_bool(form.get("is_infinity"))
+
+        try:
+            item_id = int(item_id_raw)
+        except (TypeError, ValueError):
+            message = "Selecciona un producto valido."
+        else:
+            entries, invalid_lines = _parse_bulk_account_lines(str(raw_lines))
+            created = 0
+            batch_duplicates = 0
+            db_duplicates = 0
+            seen: set[tuple[str, str, str]] = set()
+            created_item_name: str | None = None
+
+            async with Database().session() as s:
+                goods = (await s.execute(
+                    select(Goods).where(Goods.id == item_id)
+                )).scalars().first()
+                if not goods:
+                    message = "El producto seleccionado no existe."
+                else:
+                    created_item_name = goods.name
+                    for entry in entries:
+                        fingerprint = (entry["username"] or "", entry["password"] or "", entry["url"] or "")
+                        if fingerprint in seen:
+                            batch_duplicates += 1
+                            continue
+                        seen.add(fingerprint)
+
+                        existing = (await s.execute(
+                            select(ItemValues.id).where(
+                                ItemValues.item_id == item_id,
+                                ItemValues.account_username == entry["username"],
+                                ItemValues.account_password == entry["password"],
+                                ItemValues.account_url == entry["url"],
+                            )
+                        )).scalar()
+                        if existing:
+                            db_duplicates += 1
+                            continue
+
+                        s.add(ItemValues(
+                            item_id=item_id,
+                            value=_compose_account_value(
+                                entry["username"], entry["password"], entry["url"], entry["value"]
+                            ),
+                            account_username=entry["username"],
+                            account_password=entry["password"],
+                            account_url=entry["url"],
+                            is_infinity=is_infinity,
+                            status="available",
+                        ))
+                        created += 1
+                    message = (
+                        f"Cuentas creadas: {created}. "
+                        f"Duplicadas en lote: {batch_duplicates}. "
+                        f"Duplicadas en base: {db_duplicates}. "
+                        f"Invalidas: {len(invalid_lines)}."
+                    )
+            if created and created_item_name:
+                await invalidate_item_cache(created_item_name)
+                await invalidate_stats_cache()
+
+    options = "".join(
+        f"<option value='{product_id}'>{escape(product_name)}</option>"
+        for product_id, product_name in products
+    )
+    body = f"""
+    <p>Pega una cuenta por linea con formato <code>usuario|clave|url</code> o <code>usuario|clave|url|valor_libre</code>.</p>
+    <form method="post">
+      <label>Producto</label>
+      <select name="item_id" required>{options}</select>
+      <label class="checkbox"><input type="checkbox" name="is_infinity"> Stock infinito</label>
+      <label>Bloque de cuentas</label>
+      <textarea name="bulk_lines" placeholder="usuario1|clave1|https://login1.com&#10;usuario2|clave2|https://login2.com" required></textarea>
+      <button type="submit">Cargar cuentas</button>
+    </form>
+    """
+    return _render_tools_page("Bulk de cuentas en producto existente", body, message=message)
+
+
+async def bulk_unique_products(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    async with Database().session() as s:
+        categories = (await s.execute(
+            select(Categories.id, Categories.name).order_by(Categories.name.asc())
+        )).all()
+
+    if request.method == "POST":
+        form = await request.form()
+        category_id_raw = (form.get("category_id") or "").strip()
+        base_name = (form.get("base_name") or "").strip()
+        description = (form.get("description") or "").strip()
+        raw_lines = form.get("bulk_lines") or ""
+
+        try:
+            category_id = int(category_id_raw)
+            price = Decimal((form.get("price") or "").strip())
+            duration_days = max(int((form.get("duration_days") or "30").strip()), 1)
+        except (TypeError, ValueError, InvalidOperation):
+            message = "Revisa categoria, precio y duracion."
+        else:
+            is_renewable = _html_bool(form.get("is_renewable"))
+            is_active = _html_bool(form.get("is_active"))
+            is_infinity = _html_bool(form.get("is_infinity"))
+            entries, invalid_lines = _parse_bulk_unique_lines(str(raw_lines), base_name)
+            created_products = 0
+            created_accounts = 0
+            duplicate_products = 0
+            duplicate_accounts = 0
+            seen_products: set[str] = set()
+            created_names: list[str] = []
+
+            async with Database().session() as s:
+                category_exists = (await s.execute(
+                    select(Categories.id).where(Categories.id == category_id)
+                )).scalar()
+                if not category_exists or not description:
+                    message = "La categoria existe y la descripcion es obligatoria."
+                else:
+                    for entry in entries:
+                        product_name = str(entry["product_name"])
+                        if product_name in seen_products:
+                            duplicate_products += 1
+                            continue
+                        seen_products.add(product_name)
+
+                        existing_product = (await s.execute(
+                            select(Goods).where(Goods.name == product_name)
+                        )).scalars().first()
+                        if existing_product:
+                            duplicate_products += 1
+                            continue
+
+                        goods = Goods(
+                            name=product_name,
+                            description=description,
+                            price=price,
+                            category_id=category_id,
+                            duration_days=duration_days,
+                            is_renewable=is_renewable,
+                            is_active=is_active,
+                        )
+                        s.add(goods)
+                        await s.flush()
+                        created_products += 1
+
+                        existing_account = (await s.execute(
+                            select(ItemValues.id).where(
+                                ItemValues.item_id == goods.id,
+                                ItemValues.account_username == entry["username"],
+                                ItemValues.account_password == entry["password"],
+                                ItemValues.account_url == entry["url"],
+                            )
+                        )).scalar()
+                        if existing_account:
+                            duplicate_accounts += 1
+                            continue
+
+                        s.add(ItemValues(
+                            item_id=goods.id,
+                            value=_compose_account_value(
+                                str(entry["username"]), str(entry["password"]), str(entry["url"]), entry["value"]
+                            ),
+                            account_username=str(entry["username"]),
+                            account_password=str(entry["password"]),
+                            account_url=str(entry["url"]),
+                            is_infinity=is_infinity,
+                            status="available",
+                        ))
+                        created_accounts += 1
+                        created_names.append(goods.name)
+
+                    message = (
+                        f"Productos creados: {created_products}. "
+                        f"Cuentas creadas: {created_accounts}. "
+                        f"Productos duplicados: {duplicate_products}. "
+                        f"Cuentas duplicadas: {duplicate_accounts}. "
+                        f"Invalidas: {len(invalid_lines)}."
+                    )
+            if created_names:
+                for item_name in created_names:
+                    await invalidate_item_cache(item_name)
+                await invalidate_stats_cache()
+
+    options = "".join(
+        f"<option value='{category_id}'>{escape(category_name)}</option>"
+        for category_id, category_name in categories
+    )
+    body = f"""
+    <p>Modo pensado para crear productos unicos de golpe.</p>
+    <p class="hint">Formato aceptado por linea:</p>
+    <ul>
+      <li><code>usuario|clave|url</code> y se crea con nombre automatico usando <b>Nombre base</b>.</li>
+      <li><code>usuario|clave|url|valor_libre</code> con nombre automatico.</li>
+      <li><code>nombre_producto|usuario|clave|url</code> si quieres mandar el nombre en cada linea.</li>
+      <li><code>nombre_producto|usuario|clave|url|valor_libre</code>.</li>
+    </ul>
+    <form method="post">
+      <div class="row">
+        <div>
+          <label>Nombre base</label>
+          <input type="text" name="base_name" placeholder="CapCut Premium">
+          <div class="hint">Si las lineas no traen nombre, se crean como Nombre base 1, 2, 3...</div>
+        </div>
+        <div>
+          <label>Categoria</label>
+          <select name="category_id" required>{options}</select>
+        </div>
+      </div>
+      <label>Descripcion comun</label>
+      <textarea name="description" required></textarea>
+      <div class="row-3">
+        <div>
+          <label>Precio</label>
+          <input type="text" name="price" value="5.00" required>
+        </div>
+        <div>
+          <label>Duracion dias</label>
+          <input type="number" name="duration_days" value="30" min="1" required>
+        </div>
+        <div>
+          <label>Opciones</label>
+          <label class="checkbox"><input type="checkbox" name="is_renewable" checked> Renovable</label>
+          <label class="checkbox"><input type="checkbox" name="is_active" checked> Activo</label>
+          <label class="checkbox"><input type="checkbox" name="is_infinity"> Stock infinito</label>
+        </div>
+      </div>
+      <label>Bloque de productos/cuentas</label>
+      <textarea name="bulk_lines" placeholder="usuario1|clave1|https://login1.com&#10;usuario2|clave2|https://login2.com" required></textarea>
+      <button type="submit">Crear productos unicos</button>
+    </form>
+    """
+    return _render_tools_page("Bulk de productos unicos", body, message=message)
+
+
 # App Factory
 def create_admin_app() -> Starlette:
 
@@ -541,6 +1159,11 @@ def create_admin_app() -> Starlette:
         Route("/health", health_check),
         Route("/metrics", metrics_json),
         Route("/metrics/prometheus", prometheus_metrics),
+        Route("/tools", tools_home),
+        Route("/tools/stock", stock_dashboard),
+        Route("/tools/products/new", quick_new_product, methods=["GET", "POST"]),
+        Route("/tools/cuentas/bulk-existing", bulk_accounts_existing, methods=["GET", "POST"]),
+        Route("/tools/cuentas/bulk-unique", bulk_unique_products, methods=["GET", "POST"]),
     ] + export_routes
 
     app = Starlette(routes=routes)

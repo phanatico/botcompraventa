@@ -172,6 +172,10 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                     stock_username=item_value.account_username,
                     stock_password=item_value.account_password,
                     stock_url=item_value.account_url,
+                    buyer_username_snapshot=user.username,
+                    buyer_first_name_snapshot=user.first_name,
+                    buyer_email_snapshot=user.email,
+                    buyer_whatsapp_snapshot=user.whatsapp,
                 )
                 s.add(bought_item)
                 await s.flush()
@@ -499,6 +503,10 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                         stock_username=p['item_value'].account_username,
                         stock_password=p['item_value'].account_password,
                         stock_url=p['item_value'].account_url,
+                        buyer_username_snapshot=user.username,
+                        buyer_first_name_snapshot=user.first_name,
+                        buyer_email_snapshot=user.email,
+                        buyer_whatsapp_snapshot=user.whatsapp,
                     )
                     s.add(bought_item)
                     await s.flush()

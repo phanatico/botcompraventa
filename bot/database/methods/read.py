@@ -244,6 +244,110 @@ async def select_item_values_amount(item_name: str) -> int:
         )).scalar() or 0
 
 
+async def get_item_stock_summary(item_name: str) -> dict:
+    """Return real stock counters for a product name."""
+    async with Database().session() as s:
+        goods = (await s.execute(
+            select(Goods.id).where(Goods.name == item_name)
+        )).scalar()
+
+        if not goods:
+            return {
+                "item_name": item_name,
+                "available": 0,
+                "assigned": 0,
+                "expired": 0,
+                "cancelled": 0,
+                "has_infinite": False,
+                "display": "0",
+            }
+
+        available = (await s.execute(
+            select(func.count(ItemValues.id)).where(
+                ItemValues.item_id == goods,
+                ItemValues.is_infinity.is_(False),
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status == "",
+                    ItemValues.status.is_(None),
+                ),
+            )
+        )).scalar() or 0
+
+        assigned = (await s.execute(
+            select(func.count(ItemValues.id)).where(
+                ItemValues.item_id == goods,
+                ItemValues.status == "assigned",
+            )
+        )).scalar() or 0
+
+        expired = (await s.execute(
+            select(func.count(BoughtGoods.id)).where(
+                BoughtGoods.item_name == item_name,
+                BoughtGoods.status == "expired",
+            )
+        )).scalar() or 0
+
+        cancelled = (await s.execute(
+            select(func.count(BoughtGoods.id)).where(
+                BoughtGoods.item_name == item_name,
+                BoughtGoods.status == "cancelled",
+            )
+        )).scalar() or 0
+
+        has_infinite = bool((await s.execute(
+            select(exists().where(
+                ItemValues.item_id == goods,
+                ItemValues.is_infinity.is_(True),
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status == "",
+                    ItemValues.status.is_(None),
+                ),
+            ))
+        )).scalar())
+
+        return {
+            "item_name": item_name,
+            "available": int(available),
+            "assigned": int(assigned),
+            "expired": int(expired),
+            "cancelled": int(cancelled),
+            "has_infinite": has_infinite,
+            "display": "Ilimitado" if has_infinite else str(int(available)),
+        }
+
+
+async def get_stock_dashboard_rows() -> list[dict]:
+    """Return product rows with real stock counters for admin tools."""
+    async with Database().session() as s:
+        result = await s.execute(
+            select(
+                Goods.id,
+                Goods.name,
+                Goods.price,
+                Goods.is_active,
+                Categories.name.label("category_name"),
+            )
+            .join(Categories, Categories.id == Goods.category_id)
+            .order_by(Categories.name.asc(), Goods.name.asc())
+        )
+        rows = result.all()
+
+    dashboard_rows = []
+    for row in rows:
+        stock = await get_item_stock_summary(row.name)
+        dashboard_rows.append({
+            "id": row.id,
+            "name": row.name,
+            "price": row.price,
+            "is_active": row.is_active,
+            "category_name": row.category_name,
+            **stock,
+        })
+    return dashboard_rows
+
+
 async def check_value(item_name: str) -> bool:
     """Return True if item has any infinite value (is_infinity=True)."""
     async with Database().session() as s:
@@ -483,6 +587,12 @@ async def select_item_values_amount_cached(item_name: str):
     return await select_item_values_amount(item_name)
 
 
+@async_cached(ttl=300, key_prefix="item_stock")
+async def get_item_stock_summary_cached(item_name: str):
+    """Cached stock summary for one product."""
+    return await get_item_stock_summary(item_name)
+
+
 @async_cached(ttl=60, key_prefix="user_count")
 async def get_user_count_cached():
     """Cached number of users"""
@@ -513,6 +623,7 @@ async def invalidate_item_cache(item_name: str, category_name: str = None):
         await cache.delete(f"item:{item_name}")
         await cache.delete(f"item_info:{item_name}")
         await cache.delete(f"item_values:{item_name}")
+        await cache.delete(f"item_stock:{item_name}")
         if category_name:
             await cache.delete(f"category:{category_name}")
         else:

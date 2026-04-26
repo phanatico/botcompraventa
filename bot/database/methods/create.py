@@ -28,6 +28,8 @@ async def create_user(
     role: int = 1,
     username: str | None = None,
     first_name: str | None = None,
+    email: str | None = None,
+    whatsapp: str | None = None,
     is_customer_active: bool = False,
 ) -> None:
     """Create user if missing; commit."""
@@ -43,6 +45,8 @@ async def create_user(
                 referral_id=referral_id,
                 username=username,
                 first_name=first_name,
+                email=email,
+                whatsapp=whatsapp,
                 is_customer_active=is_customer_active,
             )
         )

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from functools import partial
 
@@ -12,7 +13,7 @@ from bot.database.methods import (
 )
 from bot.database.methods.read import (
     get_item_avg_rating, has_purchased_item, validate_promo_for_item,
-    get_user_review, invalidate_rating_cache, get_item_info,
+    get_user_review, invalidate_rating_cache, get_item_info, get_item_stock_summary_cached,
 )
 from bot.database.methods.create import create_review
 from bot.database.methods.lazy_queries import query_item_reviews
@@ -28,6 +29,11 @@ from bot.states.review_state import ReviewFSM
 from bot.states.promo_state import PromoFSM
 
 router = Router()
+
+
+@router.callback_query(F.data == "noop")
+async def noop_callback_handler(call: CallbackQuery):
+    await call.answer()
 
 
 # --- Shared helper: render item page ---
@@ -49,11 +55,11 @@ async def _render_item_page(target, state: FSMContext, item_name: str, back_data
             await target.answer(localize("shop.item.not_found"))
         return
 
-    quantity = await select_item_values_amount_cached(item_name)
+    stock = await get_item_stock_summary_cached(item_name)
     quantity_line = (
         localize("shop.item.quantity_unlimited")
-        if await check_value(item_name)
-        else localize("shop.item.quantity_left", count=quantity)
+        if stock["has_infinite"]
+        else localize("shop.item.quantity_left", count=stock["available"])
     )
 
     reviews_enabled = EnvKeys.REVIEWS_ENABLED == "1"
@@ -90,7 +96,7 @@ async def _render_item_page(target, state: FSMContext, item_name: str, back_data
         item_name, back_data,
         avg_rating=avg_rating, review_count=review_count_val,
         has_purchased=purchased, applied_promo=applied_promo,
-        reviews_enabled=reviews_enabled,
+        reviews_enabled=reviews_enabled, can_buy=stock["has_infinite"] or stock["available"] > 0,
     )
 
     text_lines = [
@@ -214,12 +220,14 @@ async def items_list_callback_handler(call: CallbackQuery, state: FSMContext):
 
     # Pre-fetch page items to build index map and store in state
     page_items = await paginator.get_page(0)
-    items_index = {item: i for i, item in enumerate(page_items)}
+    items_index = {item["name"]: i for i, item in enumerate(page_items)}
 
     markup = await lazy_paginated_keyboard(
         paginator=paginator,
-        item_text=lambda item: item,
-        item_callback=lambda item: f"itm:{items_index[item]}:0",
+        item_text=lambda item: (
+            f"{item['name']} (∞)" if item["has_infinite"] else f"{item['name']} ({item['available']})"
+        ),
+        item_callback=lambda item: f"itm:{items_index[item['name']]}:0",
         page=0,
         back_cb=back_data,
         nav_cb_prefix="gp_",
@@ -257,12 +265,14 @@ async def navigate_goods(call: CallbackQuery, state: FSMContext):
 
     # Pre-fetch page items to build index map and store in state
     page_items = await paginator.get_page(current_index)
-    items_index = {item: i for i, item in enumerate(page_items)}
+    items_index = {item["name"]: i for i, item in enumerate(page_items)}
 
     markup = await lazy_paginated_keyboard(
         paginator=paginator,
-        item_text=lambda item: item,
-        item_callback=lambda item: f"itm:{items_index[item]}:{current_index}",
+        item_text=lambda item: (
+            f"{item['name']} (∞)" if item["has_infinite"] else f"{item['name']} ({item['available']})"
+        ),
+        item_callback=lambda item: f"itm:{items_index[item['name']]}:{current_index}",
         page=current_index,
         back_cb=back_data,
         nav_cb_prefix="gp_",
@@ -293,7 +303,7 @@ async def item_info_callback_handler(call: CallbackQuery, state: FSMContext):
         await call.answer(localize("shop.item.not_found"), show_alert=True)
         return
 
-    item_name = goods_page_items[idx]
+    item_name = goods_page_items[idx]["name"]
     back_data = f"gp_{goods_page}"
 
     metrics = get_metrics()
@@ -625,6 +635,10 @@ async def bought_item_info_callback_handler(call: CallbackQuery):
         f"<b>Estado</b>: <code>{item.get('status', 'active')}</code>",
         f"<b>Duración</b>: <code>{item.get('duration_days', 0)}</code> días",
         f"<b>Vence</b>: <code>{item.get('expires_at')}</code>",
+        (
+            f"<b>Dias restantes</b>: <code>{max((item['expires_at'] - datetime.now(timezone.utc)).days, 0)}</code>"
+            if item.get("expires_at") else "<b>Dias restantes</b>: <code>—</code>"
+        ),
         localize("purchases.item.value", value=item["value"]),
     ])
     await call.message.edit_text(text, parse_mode='HTML', reply_markup=back(back_data))

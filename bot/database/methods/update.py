@@ -159,6 +159,8 @@ async def change_user_telegram_id(old_telegram_id: int, new_telegram_id: int) ->
             role_id=current.role_id,
             username=current.username,
             first_name=current.first_name,
+            email=current.email,
+            whatsapp=current.whatsapp,
             is_customer_active=current.is_customer_active,
             is_blocked=current.is_blocked,
         )

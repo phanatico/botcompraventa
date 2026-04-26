@@ -41,7 +41,7 @@ async def query_items_in_category(category_name: str, offset: int = 0, limit: in
         )).scalar()
         if not cat_id:
             return 0 if count_only else []
-        query = select(Goods.name).where(
+        query = select(Goods.id, Goods.name).where(
             Goods.category_id == cat_id,
             Goods.is_active.is_(True),
         )
@@ -51,7 +51,37 @@ async def query_items_in_category(category_name: str, offset: int = 0, limit: in
         result = await s.execute(
             query.order_by(Goods.name.asc()).offset(offset).limit(limit)
         )
-        return [row[0] for row in result.all()]
+        rows = []
+        for goods_id, goods_name in result.all():
+            available = (await s.execute(
+                select(func.count(ItemValues.id)).where(
+                    ItemValues.item_id == goods_id,
+                    ItemValues.is_infinity.is_(False),
+                    or_(
+                        ItemValues.status == "available",
+                        ItemValues.status == "",
+                        ItemValues.status.is_(None),
+                    ),
+                )
+            )).scalar() or 0
+            has_infinite = bool((await s.execute(
+                select(exists().where(
+                    ItemValues.item_id == goods_id,
+                    ItemValues.is_infinity.is_(True),
+                    or_(
+                        ItemValues.status == "available",
+                        ItemValues.status == "",
+                        ItemValues.status.is_(None),
+                    ),
+                ))
+            )).scalar())
+            rows.append({
+                "id": goods_id,
+                "name": goods_name,
+                "available": int(available),
+                "has_infinite": has_infinite,
+            })
+        return rows
 
 
 async def query_user_bought_items(user_id: int, offset: int = 0, limit: int = 10, count_only: bool = False) -> Any:

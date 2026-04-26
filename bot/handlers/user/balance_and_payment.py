@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.database.methods import get_user_referral, buy_item_transaction, process_payment_with_referral, create_pending_payment
-from bot.database.methods.read import get_item_info_cached
+from bot.database.methods.read import get_item_info_cached, get_item_stock_summary_cached
 from bot.keyboards import back, payment_menu, close, get_payment_choice
 from bot.logger_mesh import logger
 from bot.database.methods.audit import log_audit
@@ -427,6 +427,10 @@ async def buy_item_confirm_callback_handler(call: CallbackQuery, state: FSMConte
     item_info = await get_item_info_cached(item_name)
     if not item_info:
         await call.answer(localize("shop.item.not_found"), show_alert=True)
+        return
+    stock = await get_item_stock_summary_cached(item_name)
+    if not stock["has_infinite"] and stock["available"] <= 0:
+        await call.answer(localize("shop.out_of_stock"), show_alert=True)
         return
 
     price = Decimal(str(item_info["price"]))

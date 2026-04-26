@@ -133,12 +133,16 @@ def item_info(
         item_name: str, back_data: str, avg_rating: float = None,
         review_count: int = 0, has_purchased: bool = False,
         applied_promo: str = None, reviews_enabled: bool = True,
+        can_buy: bool = True,
 ) -> InlineKeyboardMarkup:
     """
     Product card with buy, cart, promo, review buttons.
     """
     kb = InlineKeyboardBuilder()
-    kb.button(text=localize("btn.buy"), callback_data="buy")
+    if can_buy:
+        kb.button(text=localize("btn.buy"), callback_data="buy")
+    else:
+        kb.button(text=localize("btn.out_of_stock"), callback_data="noop")
     if applied_promo:
         kb.button(text=localize("btn.remove_promo"), callback_data="remove_promo")
     else:
