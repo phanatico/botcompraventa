@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, async_sessi
 from sqlalchemy.orm import declarative_base
 
 from bot.database.dsn import dsn
-from bot.misc import SingletonMeta
+from bot.misc.singleton import SingletonMeta
 
 
 class Database(metaclass=SingletonMeta):
