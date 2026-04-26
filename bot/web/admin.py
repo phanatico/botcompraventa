@@ -168,6 +168,7 @@ class UserAdmin(AuditModelView, model=User):
                    User.registration_date, User.is_customer_active, User.is_blocked]
     form_columns = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id,
                     User.referral_id, User.is_customer_active, User.is_blocked]
+    form_include_pk = True
     column_searchable_list = [User.telegram_id, User.username, User.first_name]
     column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
@@ -301,22 +302,31 @@ class CategoryAdmin(AuditModelView, model=Categories):
 
 class GoodsAdmin(AuditModelView, model=Goods):
     column_list = [Goods.id, Goods.name, Goods.price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
-    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category]
+    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category_id]
     column_searchable_list = [Goods.name]
     column_sortable_list = [Goods.id, Goods.name, Goods.price]
     name = "Producto"
     name_plural = "Productos"
     icon = "fa-solid fa-box"
-
-    form_ajax_refs = {
-        "category": {
-            "fields": ("name",),
+    form_args = {
+        "category_id": {
+            "description": "ID numerico de la categoria. Crea primero la categoria y usa aqui su ID.",
         },
     }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
-        if getattr(model, "category", None) is not None and not getattr(model, "category_id", None):
-            model.category_id = model.category.id
+        raw_category_id = data.get("category_id", getattr(model, "category_id", None))
+        try:
+            category_id = int(raw_category_id)
+        except (TypeError, ValueError):
+            raise ValueError("Debes indicar un category_id numerico valido.")
+
+        async with Database().session() as s:
+            category_exists = await s.get(Categories, category_id)
+            if not category_exists:
+                raise ValueError("La categoria indicada no existe.")
+
+        model.category_id = category_id
 
 
 class ItemValuesAdmin(AuditModelView, model=ItemValues):
@@ -325,7 +335,7 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
         ItemValues.account_url, ItemValues.status, ItemValues.is_infinity, ItemValues.assigned_user_id,
     ]
     form_columns = [
-        ItemValues.item,
+        ItemValues.item_id,
         ItemValues.account_username,
         ItemValues.account_password,
         ItemValues.account_url,
@@ -340,13 +350,10 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     name_plural = "Credenciales"
     icon = "fa-solid fa-warehouse"
 
-    form_ajax_refs = {
-        "item": {
-            "fields": ("name",),
-        },
-    }
-
     form_args = {
+        "item_id": {
+            "description": "ID numerico del producto al que pertenece esta credencial.",
+        },
         "value": {
             "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
         },
@@ -365,8 +372,18 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
-        if getattr(model, "item", None) is not None and not getattr(model, "item_id", None):
-            model.item_id = model.item.id
+        raw_item_id = data.get("item_id", getattr(model, "item_id", None))
+        try:
+            item_id = int(raw_item_id)
+        except (TypeError, ValueError):
+            raise ValueError("Debes indicar un item_id numerico valido.")
+
+        async with Database().session() as s:
+            goods_exists = await s.get(Goods, item_id)
+            if not goods_exists:
+                raise ValueError("El producto indicado no existe.")
+
+        model.item_id = item_id
         if not data.get("status"):
             model.status = "available"
 
