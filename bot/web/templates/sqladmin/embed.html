@@ -1,0 +1,12 @@
+{% extends "sqladmin/layout.html" %}
+
+{% block content %}
+<div style="margin:-1.5rem -1.5rem 0">
+  <iframe
+    src="{{ embed_url }}"
+    title="{{ embed_title }}"
+    style="width:100%;height:calc(100vh - 70px);border:0;display:block"
+    referrerpolicy="same-origin"
+  ></iframe>
+</div>
+{% endblock %}

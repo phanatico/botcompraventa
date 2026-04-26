@@ -3,7 +3,10 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from html import escape
+from pathlib import Path
 from typing import Any
+
+_TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 
 from sqladmin import Admin, ModelView, BaseView, expose
 from sqladmin.authentication import AuthenticationBackend
@@ -103,16 +106,30 @@ def _parse_bulk_unique_lines(raw: str, base_name: str) -> tuple[list[dict[str, s
     return entries, invalid_lines
 
 
-def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse:
+def _render_tools_page(title: str, body: str, message: str = "", embedded: bool = False) -> HTMLResponse:
     notice = f"<div style='padding:12px 14px;margin:0 0 16px;border-radius:8px;background:#eef6ff;border:1px solid #bfdbfe'>{escape(message)}</div>" if message else ""
+    nav_block = "" if embedded else """
+    <div class="nav">
+      <a href="/admin">Volver al panel</a>
+      <a href="/tools" class="secondary">Herramientas</a>
+      <a href="/tools/stock" class="secondary">📦 Stock</a>
+      <a href="/tools/purchases" class="secondary">🛒 Mis Compras</a>
+      <a href="/tools/products/new" class="secondary">Nuevo producto</a>
+      <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
+      <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
+    </div>"""
+    body_padding = "0" if embedded else "24px"
+    wrap_radius = "0" if embedded else "14px"
+    wrap_shadow = "none" if embedded else "0 10px 35px rgba(15,23,42,.08)"
+    wrap_max = "100%" if embedded else "1480px"
     html = f"""<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <title>{escape(title)}</title>
   <style>
-    body {{ font-family: Arial, sans-serif; background:#f3f6fb; margin:0; padding:24px; color:#162036; }}
-    .wrap {{ max-width: 1480px; margin:0 auto; background:white; border-radius:14px; padding:24px 28px; box-shadow:0 10px 35px rgba(15,23,42,.08); }}
+    body {{ font-family: Arial, sans-serif; background:#f3f6fb; margin:0; padding:{body_padding}; color:#162036; }}
+    .wrap {{ max-width: {wrap_max}; margin:0 auto; background:white; border-radius:{wrap_radius}; padding:24px 28px; box-shadow:{wrap_shadow}; }}
     h1 {{ margin:0 0 16px; font-size:28px; }}
     h2 {{ margin-top:28px; font-size:22px; }}
     .nav a {{ display:inline-block; margin:0 12px 12px 0; padding:10px 14px; background:#1d4ed8; color:white; text-decoration:none; border-radius:8px; }}
@@ -180,15 +197,7 @@ def _render_tools_page(title: str, body: str, message: str = "") -> HTMLResponse
 </head>
 <body>
   <div class="wrap">
-    <div class="nav">
-      <a href="/tools">Herramientas</a>
-      <a href="/tools/stock" class="secondary">📦 Stock</a>
-      <a href="/tools/purchases" class="secondary">🛒 Mis Compras</a>
-      <a href="/tools/products/new" class="secondary">Nuevo producto</a>
-      <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
-      <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
-      <a href="/admin" class="secondary">Volver al panel</a>
-    </div>
+    {nav_block}
     <h1>{escape(title)}</h1>
     {notice}
     {body}
@@ -796,21 +805,24 @@ async def tools_home(request: Request) -> HTMLResponse:
     if auth_redirect:
         return auth_redirect
 
-    body = """
+    embed = bool(request.query_params.get("embed"))
+    qs = "?embed=1" if embed else ""
+
+    body = f"""
     <p>Centro de control rapido del catalogo y las ventas.</p>
     <div class="row" style="margin-top:18px">
-      <a href="/tools/stock" style="display:block;padding:18px;border-radius:12px;background:#1d4ed8;color:white;text-decoration:none;font-weight:700">
+      <a href="/tools/stock{qs}" style="display:block;padding:18px;border-radius:12px;background:#1d4ed8;color:white;text-decoration:none;font-weight:700">
         📦 Stock por producto<br><span style="font-weight:400;font-size:13px">Disponible, asignado, vencido y cancelado en tiempo real.</span>
       </a>
-      <a href="/tools/purchases" style="display:block;padding:18px;border-radius:12px;background:#0ea5e9;color:white;text-decoration:none;font-weight:700">
+      <a href="/tools/purchases{qs}" style="display:block;padding:18px;border-radius:12px;background:#0ea5e9;color:white;text-decoration:none;font-weight:700">
         🛒 Mis Compras<br><span style="font-weight:400;font-size:13px">Todas las compras con dias restantes, cliente y filtros por estado.</span>
       </a>
     </div>
     <div class="row" style="margin-top:14px">
-      <a href="/tools/cuentas/bulk-unique" style="display:block;padding:18px;border-radius:12px;background:#16a34a;color:white;text-decoration:none;font-weight:700">
+      <a href="/tools/cuentas/bulk-unique{qs}" style="display:block;padding:18px;border-radius:12px;background:#16a34a;color:white;text-decoration:none;font-weight:700">
         ⚡ Bulk productos unicos<br><span style="font-weight:400;font-size:13px">Crea 10, 50 o 100 productos unicos con sus cuentas en un solo envio.</span>
       </a>
-      <a href="/tools/cuentas/bulk-existing" style="display:block;padding:18px;border-radius:12px;background:#475569;color:white;text-decoration:none;font-weight:700">
+      <a href="/tools/cuentas/bulk-existing{qs}" style="display:block;padding:18px;border-radius:12px;background:#475569;color:white;text-decoration:none;font-weight:700">
         🧾 Bulk cuentas<br><span style="font-weight:400;font-size:13px">Anade muchas cuentas a un producto que ya existe.</span>
       </a>
     </div>
@@ -821,7 +833,7 @@ async def tools_home(request: Request) -> HTMLResponse:
       <li><b>Bulk cuentas</b>: pega muchas cuentas para un producto existente.</li>
     </ul>
     """
-    return _render_tools_page("Herramientas de catalogo", body)
+    return _render_tools_page("Herramientas de catalogo", body, embedded=bool(request.query_params.get("embed")))
 
 
 async def stock_dashboard(request: Request) -> HTMLResponse:
@@ -832,6 +844,9 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
     q = (request.query_params.get("q") or "").strip().lower()
     category_filter = (request.query_params.get("category") or "").strip()
     status_filter = (request.query_params.get("status") or "").strip()  # all|active|inactive|low|empty
+    embed = bool(request.query_params.get("embed"))
+    embed_param = "&embed=1" if embed else ""
+    embed_form = '<input type="hidden" name="embed" value="1">' if embed else ""
 
     rows = await get_stock_dashboard_rows()
     categories = sorted({str(r["category_name"]) for r in rows})
@@ -867,7 +882,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
     def tab(label: str, key: str, count: int) -> str:
         active_cls = "active" if status_filter == key or (key == "all" and not status_filter) else ""
         href_status = "" if key == "all" else f"&status={key}"
-        href = f"/tools/stock?q={escape(q)}&category={escape(category_filter)}{href_status}"
+        href = f"/tools/stock?q={escape(q)}&category={escape(category_filter)}{href_status}{embed_param}"
         return f'<a class="{active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
 
     tabs_html = (
@@ -924,6 +939,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
     <p>Vista real de stock por producto. <b>Disponible</b> cuenta lo vendible ahora mismo. Si el producto es ilimitado se muestra como tal.</p>
     {tabs_html}
     <form method="get" class="filters">
+      {embed_form}
       <input type="text" name="q" placeholder="Buscar producto o categoria..." value="{escape(q)}">
       <select name="category">
         <option value="">Todas las categorias</option>
@@ -931,7 +947,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
       </select>
       <input type="hidden" name="status" value="{escape(status_filter)}">
       <button type="submit">Filtrar</button>
-      <a href="/tools/stock" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
+      <a href="/tools/stock?embed={"1" if embed else ""}" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
     </form>
     <table class="compact">
       <thead>
@@ -951,7 +967,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
     </table>
     <p class="hint">Mostrando {len(visible)} de {total} productos. Stock bajo = 1-3 disponibles. Sin stock = 0 disponibles.</p>
     """
-    return _render_tools_page("📦 Dashboard de stock", body)
+    return _render_tools_page("📦 Dashboard de stock", body, embedded=bool(request.query_params.get("embed")))
 
 
 async def quick_new_product(request: Request) -> HTMLResponse:
@@ -1040,7 +1056,7 @@ async def quick_new_product(request: Request) -> HTMLResponse:
       <button type="submit">Crear producto</button>
     </form>
     """
-    return _render_tools_page("Nuevo producto rapido", body, message=message)
+    return _render_tools_page("Nuevo producto rapido", body, message=message, embedded=bool(request.query_params.get("embed")))
 
 
 async def bulk_accounts_existing(request: Request) -> HTMLResponse:
@@ -1136,7 +1152,7 @@ async def bulk_accounts_existing(request: Request) -> HTMLResponse:
       <button type="submit">Cargar cuentas</button>
     </form>
     """
-    return _render_tools_page("Bulk de cuentas en producto existente", body, message=message)
+    return _render_tools_page("Bulk de cuentas en producto existente", body, message=message, embedded=bool(request.query_params.get("embed")))
 
 
 async def bulk_unique_products(request: Request) -> HTMLResponse:
@@ -1295,7 +1311,7 @@ async def bulk_unique_products(request: Request) -> HTMLResponse:
       <button type="submit">Crear productos unicos</button>
     </form>
     """
-    return _render_tools_page("Bulk de productos unicos", body, message=message)
+    return _render_tools_page("Bulk de productos unicos", body, message=message, embedded=bool(request.query_params.get("embed")))
 
 
 async def purchases_dashboard(request: Request) -> HTMLResponse:
@@ -1311,6 +1327,10 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     except ValueError:
         page = 1
     per_page = 50
+    embed = bool(request.query_params.get("embed"))
+    embed_param = "&embed=1" if embed else ""
+    embed_form = '<input type="hidden" name="embed" value="1">' if embed else ""
+    iframe_target = ' target="_top"' if embed else ""
 
     now = datetime.now(timezone.utc)
     soon = now.replace(microsecond=0)
@@ -1430,7 +1450,7 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
             or (d_left is not None and d_left <= 7 and p.expires_at is not None)
         )
         if p.is_renewable and is_expired_or_soon and p.status != "cancelled":
-            renew = f'<a class="a-renew" href="/admin/bought-goods/edit/{p.id}" title="Renovar">🔄</a>'
+            renew = f'<a class="a-renew" href="/admin/bought-goods/edit/{p.id}"{iframe_target} title="Renovar">🔄</a>'
         else:
             renew = '<span class="a-renew a-disabled" title="No renovable" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;background:#f1f5f9;color:#cbd5e1">🔄</span>'
 
@@ -1445,7 +1465,7 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
         else:
             support = '<span class="a-support a-disabled" title="Sin contacto" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;background:#f1f5f9;color:#cbd5e1">💬</span>'
 
-        view = f'<a class="a-view" href="/admin/bought-goods/details/{p.id}" title="Ver detalle">👁</a>'
+        view = f'<a class="a-view" href="/admin/bought-goods/details/{p.id}"{iframe_target} title="Ver detalle">👁</a>'
         return f'<div class="actions">{renew}{support}{view}</div>'
 
     rows_html_parts: list[str] = []
@@ -1493,7 +1513,7 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     def tab_link(label: str, key: str, count: int) -> str:
         is_active = tab == key or (key == "all" and tab not in {"active", "expiring", "expired", "cancelled", "renewable"})
         active_cls = "active" if is_active else ""
-        href = f"/tools/purchases?tab={key}&q={escape(q)}"
+        href = f"/tools/purchases?tab={key}&q={escape(q)}{embed_param}"
         return f'<a class="t-{key} {active_cls}" href="{href}">{escape(label)} <span class="count">{count}</span></a>'
 
     tabs_html = (
@@ -1511,10 +1531,10 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     has_more = len(purchases) == per_page
     pagination_parts = []
     if page > 1:
-        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page - 1}">« Anterior</a>')
+        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page - 1}{embed_param}">« Anterior</a>')
     pagination_parts.append(f'<span class="muted">Pagina {page}</span>')
     if has_more:
-        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page + 1}">Siguiente »</a>')
+        pagination_parts.append(f'<a href="/tools/purchases?tab={tab}&q={escape(q)}&page={page + 1}{embed_param}">Siguiente »</a>')
     pagination_html = ' &nbsp; '.join(pagination_parts)
 
     body = f"""
@@ -1525,10 +1545,11 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     <p class="hint">Filtra por estado con las pills de arriba o usa la barra para buscar por producto, cliente, email, WhatsApp, ID Telegram o pedido. La columna <b>Dias</b> muestra el tiempo restante con codigo de color.</p>
     {tabs_html}
     <form method="get" class="filters">
+      {embed_form}
       <input type="hidden" name="tab" value="{escape(tab)}">
       <input type="text" name="q" placeholder="🔍 Buscar producto, cliente, email, whatsapp, ID Telegram, pedido..." value="{escape(q)}" style="min-width:380px">
       <button type="submit">Buscar</button>
-      <a href="/tools/purchases?tab={escape(tab)}" style="margin-left:6px;color:#475569;text-decoration:none;align-self:center">Limpiar</a>
+      <a href="/tools/purchases?tab={escape(tab)}{embed_param}" style="margin-left:6px;color:#475569;text-decoration:none;align-self:center">Limpiar</a>
     </form>
     <table class="compact">
       <thead>
@@ -1552,53 +1573,64 @@ async def purchases_dashboard(request: Request) -> HTMLResponse:
     </table>
     <div style="margin-top:14px;display:flex;gap:14px;align-items:center">{pagination_html}</div>
     """
-    return _render_tools_page(f"🛒 Mis Compras", body)
+    return _render_tools_page("🛒 Mis Compras", body, embedded=bool(request.query_params.get("embed")))
+
+
+def _embed(view: "BaseView", request: Request, target_url: str, title: str):
+    """Render the /tools/* page inside the SQLAdmin layout (sidebar visible)."""
+    sep = "&" if "?" in target_url else "?"
+    embed_url = f"{target_url}{sep}embed=1"
+    return view.templates.TemplateResponse(
+        request,
+        "sqladmin/embed.html",
+        {"embed_url": embed_url, "embed_title": title},
+    )
 
 
 class MisComprasSidebar(BaseView):
-    """Sidebar entry that takes the admin to the rich /tools/purchases dashboard."""
-    name = "🛒 Mis Compras"
+    """Sidebar entry that renders /tools/purchases inside the admin layout."""
+    name = "Mis Compras"
     icon = "fa-solid fa-cart-shopping"
 
     @expose("/mis-compras", methods=["GET"])
     async def index(self, request: Request):
-        return RedirectResponse("/tools/purchases", status_code=302)
+        return _embed(self, request, "/tools/purchases", "Mis Compras")
 
 
 class StockSidebar(BaseView):
-    name = "📦 Stock"
+    name = "Stock"
     icon = "fa-solid fa-warehouse"
 
     @expose("/stock-dashboard", methods=["GET"])
     async def index(self, request: Request):
-        return RedirectResponse("/tools/stock", status_code=302)
+        return _embed(self, request, "/tools/stock", "Stock")
 
 
 class HerramientasSidebar(BaseView):
-    name = "🛠 Herramientas"
+    name = "Herramientas"
     icon = "fa-solid fa-toolbox"
 
     @expose("/herramientas", methods=["GET"])
     async def index(self, request: Request):
-        return RedirectResponse("/tools", status_code=302)
+        return _embed(self, request, "/tools", "Herramientas")
 
 
 class BulkUniqueSidebar(BaseView):
-    name = "⚡ Bulk productos unicos"
+    name = "Bulk productos unicos"
     icon = "fa-solid fa-bolt"
 
     @expose("/bulk-unique", methods=["GET"])
     async def index(self, request: Request):
-        return RedirectResponse("/tools/cuentas/bulk-unique", status_code=302)
+        return _embed(self, request, "/tools/cuentas/bulk-unique", "Bulk productos unicos")
 
 
 class BulkAccountsSidebar(BaseView):
-    name = "🧾 Bulk cuentas"
+    name = "Bulk cuentas"
     icon = "fa-solid fa-layer-group"
 
     @expose("/bulk-cuentas", methods=["GET"])
     async def index(self, request: Request):
-        return RedirectResponse("/tools/cuentas/bulk-existing", status_code=302)
+        return _embed(self, request, "/tools/cuentas/bulk-existing", "Bulk cuentas")
 
 
 # App Factory
@@ -1627,6 +1659,7 @@ def create_admin_app() -> Starlette:
         engine=Database().engine,
         authentication_backend=auth_backend,
         title="Telegram Shop Admin",
+        templates_dir=_TEMPLATES_DIR,
     )
 
     # Custom sidebar shortcuts (top of the menu) to the /tools/* dashboards.
