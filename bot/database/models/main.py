@@ -40,12 +40,14 @@ class Role(Database.BASE):
     permissions = Column(Integer)
     users = relationship('User', backref='role', lazy='raise')
 
-    def __init__(self, name: str, permissions=None, **kwargs):
+    def __init__(self, name: str | None = None, permissions=None, **kwargs):
         super(Role, self).__init__(**kwargs)
         if self.permissions is None:
             self.permissions = 0
-        self.name = name
-        self.permissions = permissions
+        if name is not None:
+            self.name = name
+        if permissions is not None:
+            self.permissions = permissions
 
     @staticmethod
     async def insert_roles():
@@ -122,17 +124,23 @@ class User(Database.BASE):
         lazy='raise',
     )
 
-    def __init__(self, telegram_id: int, registration_date: datetime.datetime, balance=0, referral_id=None,
-                 role_id: int = 1, username: str | None = None, first_name: str | None = None,
+    def __init__(self, telegram_id: int | None = None, registration_date: datetime.datetime | None = None,
+                 balance=0, referral_id=None, role_id: int = 1, username: str | None = None,
+                 first_name: str | None = None,
                  is_customer_active: bool = False, **kw: Any):
         super().__init__(**kw)
-        self.telegram_id = telegram_id
+        if telegram_id is not None:
+            self.telegram_id = telegram_id
         self.role_id = role_id
-        self.username = username
-        self.first_name = first_name
+        if username is not None:
+            self.username = username
+        if first_name is not None:
+            self.first_name = first_name
         self.balance = balance
-        self.referral_id = referral_id
-        self.registration_date = registration_date
+        if referral_id is not None:
+            self.referral_id = referral_id
+        if registration_date is not None:
+            self.registration_date = registration_date
         self.is_customer_active = is_customer_active
 
 
@@ -142,9 +150,10 @@ class Categories(Database.BASE):
     name = Column(String(100), unique=True, nullable=False)
     items = relationship("Goods", back_populates="category", lazy='raise')
 
-    def __init__(self, name: str, **kw: Any):
+    def __init__(self, name: str | None = None, **kw: Any):
         super().__init__(**kw)
-        self.name = name
+        if name is not None:
+            self.name = name
 
 
 class Goods(Database.BASE):
@@ -160,16 +169,21 @@ class Goods(Database.BASE):
     category = relationship("Categories", back_populates="items", lazy='raise')
     values = relationship("ItemValues", back_populates="item", lazy='raise')
 
-    def __init__(self, name: str, price, description: str, category_id: int, duration_days: int = 30,
+    def __init__(self, name: str | None = None, price=None, description: str | None = None,
+                 category_id: int | None = None, duration_days: int = 30,
                  is_renewable: bool = True, is_active: bool = True, **kw: Any):
         super().__init__(**kw)
-        self.name = name
-        self.price = price
-        self.description = description
+        if name is not None:
+            self.name = name
+        if price is not None:
+            self.price = price
+        if description is not None:
+            self.description = description
         self.duration_days = duration_days
         self.is_renewable = is_renewable
         self.is_active = is_active
-        self.category_id = category_id
+        if category_id is not None:
+            self.category_id = category_id
 
 
 class ItemValues(Database.BASE):
@@ -191,18 +205,25 @@ class ItemValues(Database.BASE):
         Index('ix_item_values_item_inf', 'item_id', 'is_infinity'),
     )
 
-    def __init__(self, item_id: int, value: str | None, is_infinity: bool, account_username: str | None = None,
+    def __init__(self, item_id: int | None = None, value: str | None = None, is_infinity: bool = False,
+                 account_username: str | None = None,
                  account_password: str | None = None, account_url: str | None = None, status: str = "available",
                  assigned_user_id: int | None = None, **kw: Any):
         super().__init__(**kw)
-        self.item_id = item_id
-        self.value = value
-        self.account_username = account_username
-        self.account_password = account_password
-        self.account_url = account_url
+        if item_id is not None:
+            self.item_id = item_id
+        if value is not None:
+            self.value = value
+        if account_username is not None:
+            self.account_username = account_username
+        if account_password is not None:
+            self.account_password = account_password
+        if account_url is not None:
+            self.account_url = account_url
         self.is_infinity = is_infinity
         self.status = status
-        self.assigned_user_id = assigned_user_id
+        if assigned_user_id is not None:
+            self.assigned_user_id = assigned_user_id
 
 
 class BoughtGoods(Database.BASE):
@@ -231,25 +252,38 @@ class BoughtGoods(Database.BASE):
         Index('ix_bought_goods_buyer_datetime', 'buyer_id', 'bought_datetime'),
     )
 
-    def __init__(self, name: str, value: str, price, bought_datetime, unique_id, buyer_id: int = 0,
-                 starts_at=None, expires_at=None, duration_days: int = 0, status: str = "active",
+    def __init__(self, name: str | None = None, value: str | None = None, price=None, bought_datetime=None,
+                 unique_id=None, buyer_id: int = 0, starts_at=None, expires_at=None, duration_days: int = 0,
+                 status: str = "active",
                  is_renewable: bool = False, stock_username: str | None = None,
                  stock_password: str | None = None, stock_url: str | None = None, **kw: Any):
         super().__init__(**kw)
-        self.item_name = name
-        self.value = value
-        self.stock_username = stock_username
-        self.stock_password = stock_password
-        self.stock_url = stock_url
-        self.price = price
+        if name is not None:
+            self.item_name = name
+        if value is not None:
+            self.value = value
+        if stock_username is not None:
+            self.stock_username = stock_username
+        if stock_password is not None:
+            self.stock_password = stock_password
+        if stock_url is not None:
+            self.stock_url = stock_url
+        if price is not None:
+            self.price = price
         self.buyer_id = buyer_id
-        self.bought_datetime = bought_datetime
-        self.starts_at = starts_at or bought_datetime
-        self.expires_at = expires_at
+        if bought_datetime is not None:
+            self.bought_datetime = bought_datetime
+        if starts_at is not None:
+            self.starts_at = starts_at
+        elif bought_datetime is not None:
+            self.starts_at = bought_datetime
+        if expires_at is not None:
+            self.expires_at = expires_at
         self.duration_days = duration_days
         self.status = status
         self.is_renewable = is_renewable
-        self.unique_id = unique_id
+        if unique_id is not None:
+            self.unique_id = unique_id
 
 
 class Operations(Database.BASE):
@@ -264,11 +298,14 @@ class Operations(Database.BASE):
         Index('ix_operations_time', 'operation_time'),
     )
 
-    def __init__(self, user_id: int, operation_value, operation_time, **kw: Any):
+    def __init__(self, user_id: int | None = None, operation_value=None, operation_time=None, **kw: Any):
         super().__init__(**kw)
-        self.user_id = user_id
-        self.operation_value = operation_value
-        self.operation_time = operation_time
+        if user_id is not None:
+            self.user_id = user_id
+        if operation_value is not None:
+            self.operation_value = operation_value
+        if operation_time is not None:
+            self.operation_time = operation_time
 
 
 class Payments(Database.BASE):
@@ -318,12 +355,17 @@ class ReferralEarnings(Database.BASE):
         Index('ix_referral_earnings_referral_created', 'referral_id', 'created_at'),
     )
 
-    def __init__(self, referrer_id: int, referral_id: int, amount, original_amount, **kw: Any):
+    def __init__(self, referrer_id: int | None = None, referral_id: int | None = None,
+                 amount=None, original_amount=None, **kw: Any):
         super().__init__(**kw)
-        self.referrer_id = referrer_id
-        self.referral_id = referral_id
-        self.amount = amount
-        self.original_amount = original_amount
+        if referrer_id is not None:
+            self.referrer_id = referrer_id
+        if referral_id is not None:
+            self.referral_id = referral_id
+        if amount is not None:
+            self.amount = amount
+        if original_amount is not None:
+            self.original_amount = original_amount
 
 
 class AuditLog(Database.BASE):
