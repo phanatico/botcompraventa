@@ -169,6 +169,7 @@ class UserAdmin(AuditModelView, model=User):
     form_columns = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id,
                     User.referral_id, User.is_customer_active, User.is_blocked]
     form_include_pk = True
+    can_create = False
     column_searchable_list = [User.telegram_id, User.username, User.first_name]
     column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
@@ -291,9 +292,10 @@ class RoleAdmin(AuditModelView, model=Role):
 
 
 class CategoryAdmin(AuditModelView, model=Categories):
-    column_list = [Categories.name]
+    column_list = [Categories.id, Categories.name]
     form_columns = [Categories.name]
     column_searchable_list = [Categories.name]
+    column_sortable_list = [Categories.id, Categories.name]
     name = "Categoria"
     name_plural = "Categorias"
     icon = "fa-solid fa-folder"
@@ -309,7 +311,7 @@ class GoodsAdmin(AuditModelView, model=Goods):
     icon = "fa-solid fa-box"
     form_args = {
         "category_id": {
-            "description": "ID numerico de la categoria. Crea primero la categoria y usa aqui su ID.",
+            "description": "ID numerico de la categoria. Crea primero la categoria y usa aqui el ID que ves en la tabla de Categorias.",
         },
     }
 
@@ -351,7 +353,7 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
 
     form_args = {
         "item_id": {
-            "description": "ID numerico del producto al que pertenece esta credencial.",
+            "description": "ID numerico del producto al que pertenece esta credencial. Usa el ID que ves en la tabla de Productos.",
         },
         "value": {
             "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
