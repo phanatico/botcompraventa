@@ -6,7 +6,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy import select
 
-from bot.database import Database
+from bot.database.main import Database
 from bot.database.models.main import BoughtGoods
 from bot.i18n import localize
 

@@ -59,7 +59,7 @@ via the command line (CLI) without the need for a shell and advanced monitoring 
 - **Promo Codes**: Percent/fixed/balance discount types, category/item binding, usage limits, expiration
 - **Product Reviews**: 1–5 star ratings with optional text, one review per user per item
 - **Referral System**: Configurable commission rates
-- **Multi-language Support**: Russian and English localization
+- **Multi-language Support**: Spanish-first localization with Russian disabled by default
 
 ### Admin Features
 
@@ -96,7 +96,7 @@ via the command line (CLI) without the need for a shell and advanced monitoring 
     - Zero thread-pool overhead — all DB operations run natively on the event loop
     - Async connection pooling with automatic recycling and timeout handling
     - Graceful handling of high-load scenarios
-- **Optional Redis Caching**: Multi-layer caching system for optimal performance (enable with `REDIS_ENABLED=1`)
+- **Optional Redis Caching**: Multi-layer caching system for optimal performance (disabled by default, enable with `REDIS_ENABLED=1`)
     - User role caching (15-minute TTL)
     - Product catalog caching (5-minute TTL)
     - Statistics caching (1-minute TTL)

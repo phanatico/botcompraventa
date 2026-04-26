@@ -34,7 +34,7 @@ class EnvKeys(ABC):
     POSTGRES_HOST: Final = _get_optional("POSTGRES_HOST", "localhost")
 
     # Redis
-    REDIS_ENABLED: Final = _get_optional("REDIS_ENABLED", "1")
+    REDIS_ENABLED: Final = _get_optional("REDIS_ENABLED", "0")
     REDIS_HOST: Final = _get_optional("REDIS_HOST", "localhost")
     REDIS_PORT: Final = int(_get_optional("REDIS_PORT", "6379"))
     REDIS_DB: Final = int(_get_optional("REDIS_DB", "0"))

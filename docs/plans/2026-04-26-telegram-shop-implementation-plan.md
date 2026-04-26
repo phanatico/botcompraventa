@@ -42,5 +42,7 @@ Fecha: 2026-04-26
 ## Fase 6. Verificación y despliegue
 
 - Revisar migraciones.
+- Evitar imports laterales del paquete `bot` durante `alembic upgrade head`.
+- Dejar `REDIS_ENABLED=0` como valor por defecto para despliegue base.
 - Revisar consistencia de consultas y handlers.
 - Dejar pasos de conexión con GitHub y despliegue en dedicado.

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv(encoding='utf-8')
 
-from bot import start_bot
+from bot.main import start_bot
 
 if __name__ == "__main__":
     try:
