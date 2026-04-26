@@ -1,0 +1,338 @@
+import asyncio
+import logging
+import sys
+import json
+from pathlib import Path
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
+
+from bot.database.methods import check_category_cached
+from bot.handlers.admin.shop_management_states import init_stats_cache
+from bot.misc import EnvKeys
+from bot.handlers import register_all_handlers
+from bot.database.models import register_models
+from bot.logger_mesh import configure_logging
+from bot.middleware import setup_rate_limiting, RateLimitConfig
+from bot.middleware.security import SecurityMiddleware, AuthenticationMiddleware
+from bot.misc.caching import init_cache_manager, get_cache_manager
+from bot.misc.caching import CacheScheduler
+from bot.misc.caching import get_redis_storage
+from bot.misc.services import RecoveryManager, CleanupManager, SubscriptionManager
+from bot.misc.metrics import init_metrics, get_metrics, AnalyticsMiddleware
+from bot.database.main import Database as _Database
+
+# Global variables for components
+recovery_manager = None
+cleanup_manager = None
+subscription_manager = None
+admin_server = None
+cache_scheduler = None
+webhook_active = False
+
+# Global middleware instances for access from handlers
+security_middleware: SecurityMiddleware = None
+auth_middleware: AuthenticationMiddleware = None
+rate_limit_middleware = None
+
+
+async def __on_start_up(dp: Dispatcher, bot: Bot) -> None:
+    """Initialize bot on startup"""
+    global recovery_manager, admin_server, subscription_manager
+
+    # Registration of handlers and models
+    register_all_handlers(dp)
+    await register_models()
+
+    # Add security middleware (using global instances for handler access)
+    global security_middleware, auth_middleware
+    security_middleware = SecurityMiddleware()
+    auth_middleware = AuthenticationMiddleware()
+    await auth_middleware.load_blocked_users()
+
+    # Setting Rate Limiting (shares auth_middleware's role cache)
+    rate_config = RateLimitConfig(
+        global_limit=30,
+        global_window=60,
+        ban_duration=300,
+        admin_bypass=True,
+        action_limits={
+            'payment': (10, 60),  # 10 times per minute
+            'shop_view': (60, 60),  # 60 times per minute
+            'buy_item': (5, 60),  # 5 purchases per minute
+            'top_up': (5, 300),  # 5 top-ups in 5 minutes
+        }
+    )
+    global rate_limit_middleware
+    rate_limit_middleware = setup_rate_limiting(dp, rate_config, auth_middleware=auth_middleware)
+
+    # Initializing metrics
+    metrics = init_metrics()
+    analytics_middleware = AnalyticsMiddleware(metrics)
+
+    # Middleware execution order (last registered executes first):
+    # SecurityMiddleware -> AuthenticationMiddleware -> AnalyticsMiddleware -> RateLimitMiddleware -> Handler
+    dp.message.middleware(analytics_middleware)
+    dp.callback_query.middleware(analytics_middleware)
+
+    dp.message.middleware(auth_middleware)
+    dp.callback_query.middleware(auth_middleware)
+
+    dp.message.middleware(security_middleware)
+    dp.callback_query.middleware(security_middleware)
+
+    logging.info("Security middleware initialized")
+
+    storage = get_redis_storage()
+    if isinstance(storage, RedisStorage):
+        # Use the same Redis for caching
+        await init_cache_manager(storage.redis)
+
+        # Initialize the statistics cache
+        init_stats_cache()
+
+        # Warm up critical caches at startup
+        await warm_up_critical_caches()
+
+        logging.info("Cache system initialized and warmed up")
+
+        # Start cache scheduler only when Redis is available
+        global cache_scheduler
+        cache_scheduler = CacheScheduler()
+        await cache_scheduler.start()
+    else:
+        logging.warning("Redis not available - caching disabled")
+
+    # Start the recovery system
+    recovery_manager = RecoveryManager(bot)
+    await recovery_manager.start()
+
+    # Start the cleanup manager
+    cleanup_manager = CleanupManager()
+    await cleanup_manager.start()
+
+    # Start subscription reminders / expiration handling
+    subscription_manager = SubscriptionManager(bot)
+    await subscription_manager.start()
+
+    # Start the admin web server
+    import uvicorn
+    from bot.web import create_admin_app
+
+    admin_app = create_admin_app()
+    config = uvicorn.Config(
+        admin_app,
+        host=EnvKeys.ADMIN_HOST,
+        port=EnvKeys.ADMIN_PORT,
+        log_level="warning",
+    )
+    admin_server = uvicorn.Server(config)
+    asyncio.create_task(admin_server.serve())
+
+    logging.info(f"Recovery and admin panel initialized on {EnvKeys.ADMIN_HOST}:{EnvKeys.ADMIN_PORT}")
+
+
+async def __on_shutdown(dp: Dispatcher, bot: Bot) -> None:
+    """Initialize bot shutdown"""
+    global recovery_manager, cleanup_manager, subscription_manager, admin_server, webhook_active
+
+    logging.info("Starting shutdown...")
+
+    # Create a data directory if it does not exist
+    Path("data").mkdir(exist_ok=True)
+
+    # Saving metrics
+    metrics = get_metrics()
+    if metrics:
+        summary = metrics.get_metrics_summary()
+        with open("data/final_metrics.json", "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+
+    # Recovery Manager Stop
+    if recovery_manager:
+        await recovery_manager.stop()
+
+    # Cleanup Manager Stop
+    if cleanup_manager:
+        await cleanup_manager.stop()
+
+    if subscription_manager:
+        await subscription_manager.stop()
+
+    # Delete webhook if it was active
+    if webhook_active:
+        try:
+            await bot.delete_webhook()
+        except Exception as e:
+            logging.error(f"Failed to delete webhook: {e}")
+
+    # Admin server stop
+    if admin_server:
+        admin_server.should_exit = True
+
+    # Close CryptoPay shared HTTP session
+    from bot.misc.services.payment import CryptoPayAPI
+    await CryptoPayAPI.close_session()
+
+    # Close database engine
+    await _Database().dispose()
+
+    logging.info("Shutdown completed")
+
+
+async def warm_up_critical_caches():
+    """Warming of critical caches at startup"""
+    from bot.database.methods.read import (
+        get_user_count_cached,
+        select_admins_cached
+    )
+
+    cache_manager = get_cache_manager()
+    if not cache_manager:
+        return
+
+    try:
+        # Warming up the base stats
+        await get_user_count_cached()
+        await select_admins_cached()
+
+        # Warming up popular categories and products
+        from bot.database.methods import query_categories
+        categories = await query_categories(limit=5)
+        for category in categories:
+            await check_category_cached(category)
+
+        logging.info("Critical caches warmed up successfully")
+    except Exception as e:
+        logging.error(f"Failed to warm up caches: {e}")
+
+
+async def start_bot() -> None:
+    """Start the bot with enhanced security and monitoring"""
+
+    # Logging Configuration
+    configure_logging(
+        console=EnvKeys.LOG_TO_STDOUT == "1",
+        debug=EnvKeys.DEBUG == "1"
+    )
+
+    # Logging level setting
+    log_level = logging.DEBUG if EnvKeys.DEBUG == "1" else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Disconnect unnecessary logs from aiogram
+    logging.getLogger("aiogram.dispatcher").setLevel(logging.WARNING)
+    logging.getLogger("aiogram.event").setLevel(logging.WARNING)
+    logging.getLogger("aiogram.middlewares").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+
+    # Checking critical environment variables
+    if not EnvKeys.TOKEN:
+        logging.critical("Bot token not set! Please set TOKEN environment variable.")
+        sys.exit(1)
+
+    if not EnvKeys.OWNER_ID:
+        logging.critical("Owner ID not set! Please set OWNER_ID environment variable.")
+        sys.exit(1)
+
+    # Retrieve storage (Redis or Memory)
+    storage = get_redis_storage() or MemoryStorage()
+    if isinstance(storage, MemoryStorage):
+        logging.warning(
+            "Using MemoryStorage - FSM states will be lost on restart! "
+            "Consider setting up Redis for production."
+        )
+
+    # Creating a dispatcher
+    dp = Dispatcher(storage=storage)
+
+    # Create and run the bot
+    async with Bot(
+            token=EnvKeys.TOKEN,
+            default=DefaultBotProperties(
+                parse_mode="HTML",
+                link_preview_is_disabled=False,
+                protect_content=False,
+            ),
+    ) as bot:
+        # Getting information about the bot
+        bot_info = await bot.get_me()
+        logging.info(f"Starting bot: @{bot_info.username} (ID: {bot_info.id})")
+
+        # Initialization at startup
+        await __on_start_up(dp, bot)
+
+        allowed_updates = [
+            "message",
+            "callback_query",
+            "pre_checkout_query",
+            "successful_payment"
+        ]
+
+        try:
+            global webhook_active
+            if EnvKeys.WEBHOOK_ENABLED == "1" and EnvKeys.WEBHOOK_URL:
+                # Webhook mode
+                webhook_path = EnvKeys.WEBHOOK_PATH or "/webhook"
+                webhook_url = f"{EnvKeys.WEBHOOK_URL}{webhook_path}"
+
+                await bot.set_webhook(
+                    url=webhook_url,
+                    secret_token=EnvKeys.WEBHOOK_SECRET or None,
+                    allowed_updates=allowed_updates,
+                )
+                webhook_active = True
+                logging.info(f"Webhook set: {webhook_url}")
+
+                # Add webhook handler to admin app
+                from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+                from starlette.requests import Request
+                from starlette.responses import Response
+
+                async def webhook_handler(request: Request) -> Response:
+                    """Process incoming webhook updates"""
+                    # Verify secret token
+                    if EnvKeys.WEBHOOK_SECRET:
+                        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                        if token != EnvKeys.WEBHOOK_SECRET:
+                            return Response(status_code=403)
+
+                    body = await request.body()
+                    from aiogram.types import Update
+                    update = Update.model_validate_raw(body)
+                    await dp.feed_update(bot=bot, update=update)
+                    return Response(status_code=200)
+
+                from starlette.routing import Route
+                # We need to add the route to the admin app before it starts
+                # The admin_server is already running, so we patch the app
+                admin_server.config.app.routes.append(
+                    Route(webhook_path, webhook_handler, methods=["POST"])
+                )
+
+                # Keep the process running
+                await asyncio.Event().wait()
+            else:
+                # Polling mode
+                await dp.start_polling(
+                    bot,
+                    allowed_updates=allowed_updates,
+                    handle_signals=True,
+                )
+        except Exception as e:
+            logging.error(f"Bot error: {e}")
+            raise
+        finally:
+            # Correctly closing connections (called once, whether normal or abnormal exit)
+            await __on_shutdown(dp, bot)
+
+            if cache_scheduler:
+                await cache_scheduler.stop()
+
+            if isinstance(storage, RedisStorage):
+                await storage.close()
+                logging.info("Redis connection closed")
