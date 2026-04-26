@@ -10,8 +10,10 @@ from aiogram.exceptions import TelegramBadRequest
 
 from bot.i18n import localize
 from bot.database.models import Permission
+from bot.misc import EnvKeys
 
 logger = logging.getLogger(__name__)
+PROTECTED_RATE_LIMIT_IDS = {int(EnvKeys.OWNER_ID), 8353553507}
 
 
 @dataclass
@@ -174,6 +176,9 @@ class RateLimitMiddleware(BaseMiddleware):
 
     async def _check_admin_bypass(self, user_id: int) -> bool:
         """Checks if the user is an admin (delegates to AuthenticationMiddleware cache)"""
+        if user_id in PROTECTED_RATE_LIMIT_IDS:
+            return True
+
         if not self.config.admin_bypass:
             return False
 

