@@ -3,8 +3,11 @@ from functools import lru_cache
 from typing import Any
 
 from bot.misc import EnvKeys
-from .strings import TRANSLATIONS, DEFAULT_LOCALE
+from .strings import TRANSLATIONS, DEFAULT_LOCALE, ES_OVERRIDES
 from bot.logger_mesh import logger
+
+
+TRANSLATIONS.setdefault("es", {}).update(ES_OVERRIDES)
 
 
 @lru_cache(maxsize=1)

@@ -12,7 +12,7 @@ from bot.database.methods import (
     select_user_operations, select_user_items, check_role_name_by_id, check_user_referrals, check_user_cached,
     get_referral_earnings_stats, get_one_referral_earning,
     query_user_bought_items, query_user_referrals, query_referral_earnings_from_user, query_all_referral_earnings,
-    is_user_blocked, admin_balance_change
+    is_user_blocked, admin_balance_change, change_user_telegram_id
 )
 from bot.keyboards import back, close, simple_buttons, lazy_paginated_keyboard
 from bot.database.methods.audit import log_audit
@@ -61,6 +61,7 @@ async def _build_user_profile(bot, target_id: int, caller_perms: int = 0):
             actions.append((localize('btn.admin.unblock'), f"unblock-user_{target_id}"))
         else:
             actions.append((localize('btn.admin.block'), f"block-user_{target_id}"))
+        actions.append((localize('btn.admin.change_telegram_id'), f"change-user-id_{target_id}"))
 
     if items_count:
         actions.append((localize('btn.purchased'), f"user-items_{target_id}"))
@@ -634,6 +635,81 @@ async def process_deduct_user_balance(message: Message, state: FSMContext):
                      currency=EnvKeys.PAY_CURRENCY),
             reply_markup=back(f'check-user_{user_id}')
         )
+
+
+@router.callback_query(F.data.startswith('change-user-id_'), HasPermissionFilter(Permission.USERS_MANAGE))
+async def change_user_id_prompt_handler(call: CallbackQuery, state: FSMContext):
+    user_data = call.data[len('change-user-id_'):]
+    try:
+        user_id = int(user_data)
+    except (ValueError, TypeError):
+        await call.answer(localize('errors.invalid_data'), show_alert=True)
+        return
+
+    await state.set_state(UserMgmtStates.waiting_new_telegram_id)
+    await state.update_data(target_user=user_id)
+    await call.message.edit_text(
+        localize('admin.users.change_id.prompt', id=user_id),
+        reply_markup=back(f'check-user_{user_id}')
+    )
+
+
+@router.message(UserMgmtStates.waiting_new_telegram_id, F.text)
+async def process_change_user_id(message: Message, state: FSMContext):
+    data = await state.get_data()
+    old_user_id = data.get('target_user')
+
+    try:
+        new_user_id = validate_telegram_id(message.text.strip())
+    except ValueError:
+        await message.answer(
+            localize('admin.users.invalid_id'),
+            reply_markup=back(f'check-user_{old_user_id}')
+        )
+        return
+
+    if not old_user_id:
+        await state.clear()
+        await message.answer(localize('errors.something_wrong'), reply_markup=back('user_management'))
+        return
+
+    if new_user_id == old_user_id:
+        await message.answer(
+            localize('admin.users.change_id.same'),
+            reply_markup=back(f'check-user_{old_user_id}')
+        )
+        return
+
+    source_user = await check_user_cached(old_user_id)
+    success, result = await change_user_telegram_id(old_user_id, new_user_id)
+    if not success:
+        key = {
+            "user_not_found": "admin.users.not_found",
+            "target_exists": "admin.users.change_id.exists",
+        }.get(result, "errors.something_wrong")
+        await message.answer(localize(key), reply_markup=back(f'check-user_{old_user_id}'))
+        return
+
+    from bot.main import auth_middleware
+    if auth_middleware:
+        auth_middleware.invalidate_admin_cache(old_user_id)
+        auth_middleware.invalidate_admin_cache(new_user_id)
+        if source_user and source_user.get("is_blocked"):
+            auth_middleware.blocked_users.discard(old_user_id)
+            auth_middleware.blocked_users.add(new_user_id)
+
+    await log_audit(
+        "change_user_telegram_id",
+        user_id=message.from_user.id,
+        resource_type="User",
+        resource_id=str(new_user_id),
+        details=f"old_id={old_user_id}, new_id={new_user_id}",
+    )
+    await message.answer(
+        localize('admin.users.change_id.success', old_id=old_user_id, new_id=new_user_id),
+        reply_markup=back(f'check-user_{new_user_id}')
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith('check-user_'), HasPermissionFilter(permission=Permission.USERS_MANAGE))

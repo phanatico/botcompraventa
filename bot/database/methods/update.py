@@ -3,8 +3,8 @@ from sqlalchemy import exc, select, update
 from bot.database.methods.read import invalidate_user_cache, invalidate_stats_cache, invalidate_item_cache, \
     invalidate_category_cache
 from bot.database.methods.cache_utils import safe_create_task
-from bot.database.models import User, ItemValues, Goods, Categories, BoughtGoods, Role
-from bot.database.models.main import PromoCodes
+from bot.database.models import User, ItemValues, Goods, Categories, BoughtGoods, Role, Operations
+from bot.database.models.main import PromoCodes, Payments, ReferralEarnings, PromoCodeUsages, CartItems, Reviews, AuditLog
 from bot.database import Database
 from bot.i18n import localize
 
@@ -108,6 +108,55 @@ async def set_customer_active(telegram_id: int, active: bool) -> bool:
             safe_create_task(invalidate_user_cache(telegram_id))
             return True
         return False
+
+
+async def change_user_telegram_id(old_telegram_id: int, new_telegram_id: int) -> tuple[bool, str]:
+    """Move a user to a new Telegram ID and update all known references atomically."""
+    async with Database().session() as s:
+        current = (await s.execute(
+            select(User).where(User.telegram_id == old_telegram_id).with_for_update()
+        )).scalars().first()
+        if not current:
+            return False, "user_not_found"
+
+        existing = (await s.execute(
+            select(User.telegram_id).where(User.telegram_id == new_telegram_id).with_for_update()
+        )).scalar()
+        if existing:
+            return False, "target_exists"
+
+        replacement = User(
+            telegram_id=new_telegram_id,
+            registration_date=current.registration_date,
+            balance=current.balance,
+            referral_id=current.referral_id,
+            role_id=current.role_id,
+            username=current.username,
+            first_name=current.first_name,
+            is_customer_active=current.is_customer_active,
+            is_blocked=current.is_blocked,
+        )
+        s.add(replacement)
+        await s.flush()
+
+        await s.execute(update(User).where(User.referral_id == old_telegram_id).values(referral_id=new_telegram_id))
+        await s.execute(update(ItemValues).where(ItemValues.assigned_user_id == old_telegram_id).values(assigned_user_id=new_telegram_id))
+        await s.execute(update(BoughtGoods).where(BoughtGoods.buyer_id == old_telegram_id).values(buyer_id=new_telegram_id))
+        await s.execute(update(Operations).where(Operations.user_id == old_telegram_id).values(user_id=new_telegram_id))
+        await s.execute(update(Payments).where(Payments.user_id == old_telegram_id).values(user_id=new_telegram_id))
+        await s.execute(update(ReferralEarnings).where(ReferralEarnings.referrer_id == old_telegram_id).values(referrer_id=new_telegram_id))
+        await s.execute(update(ReferralEarnings).where(ReferralEarnings.referral_id == old_telegram_id).values(referral_id=new_telegram_id))
+        await s.execute(update(PromoCodeUsages).where(PromoCodeUsages.user_id == old_telegram_id).values(user_id=new_telegram_id))
+        await s.execute(update(CartItems).where(CartItems.user_id == old_telegram_id).values(user_id=new_telegram_id))
+        await s.execute(update(Reviews).where(Reviews.user_id == old_telegram_id).values(user_id=new_telegram_id))
+        await s.execute(update(AuditLog).where(AuditLog.user_id == old_telegram_id).values(user_id=new_telegram_id))
+
+        await s.delete(current)
+
+    safe_create_task(invalidate_user_cache(old_telegram_id))
+    safe_create_task(invalidate_user_cache(new_telegram_id))
+    safe_create_task(invalidate_stats_cache())
+    return True, "success"
 
 
 async def is_user_blocked(telegram_id: int) -> bool:

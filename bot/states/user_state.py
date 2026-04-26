@@ -6,3 +6,4 @@ class UserMgmtStates(StatesGroup):
     waiting_user_id_for_check = State()
     waiting_user_replenish = State()
     waiting_user_deduct = State()
+    waiting_new_telegram_id = State()

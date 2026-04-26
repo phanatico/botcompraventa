@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import select, update, exists as sa_exists, delete as sa_delete
+from sqlalchemy import select, update, exists as sa_exists, delete as sa_delete, or_
 from sqlalchemy.exc import IntegrityError
 
 from bot.database.models import User, ItemValues, Goods, BoughtGoods, Payments, Operations
@@ -128,7 +128,10 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                     select(ItemValues)
                     .where(
                         ItemValues.item_id == goods.id,
-                        ItemValues.status == "available",
+                        or_(
+                            ItemValues.status == "available",
+                            ItemValues.status.is_(None),
+                        ),
                     )
                     .with_for_update()
                 )).scalars().first()
@@ -383,7 +386,10 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
 
                     query = select(ItemValues).where(
                         ItemValues.item_id == goods.id,
-                        ItemValues.status == "available",
+                        or_(
+                            ItemValues.status == "available",
+                            ItemValues.status.is_(None),
+                        ),
                     )
                     if claimed_value_ids:
                         query = query.where(ItemValues.id.notin_(claimed_value_ids))

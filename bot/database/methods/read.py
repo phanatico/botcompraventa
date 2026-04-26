@@ -237,6 +237,7 @@ async def select_item_values_amount(item_name: str) -> int:
                 or_(
                     ItemValues.is_infinity.is_(True),
                     ItemValues.status == "available",
+                    ItemValues.status.is_(None),
                 )
             )
         )).scalar() or 0
@@ -250,7 +251,10 @@ async def check_value(item_name: str) -> bool:
                 ItemValues.item_id == Goods.id,
                 Goods.name == item_name,
                 ItemValues.is_infinity.is_(True),
-                ItemValues.status == "available",
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status.is_(None),
+                ),
             ))
         )).scalar()
 

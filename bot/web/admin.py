@@ -142,6 +142,8 @@ class AuditModelView(ModelView):
 class UserAdmin(AuditModelView, model=User):
     column_list = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id, User.referral_id,
                    User.registration_date, User.is_customer_active, User.is_blocked]
+    form_columns = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id,
+                    User.referral_id, User.is_customer_active, User.is_blocked]
     column_searchable_list = [User.telegram_id, User.username, User.first_name]
     column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
@@ -207,6 +209,7 @@ def _format_perms_html(model, name):
 
 class RoleAdmin(AuditModelView, model=Role):
     column_list = [Role.id, Role.name, Role.default, Role.permissions]
+    form_columns = [Role.name, Role.default, Role.permissions]
     column_details_exclude_list = ["users"]
     column_sortable_list = [Role.id, Role.name]
     name = "Rol"
@@ -228,6 +231,7 @@ class RoleAdmin(AuditModelView, model=Role):
 
 class CategoryAdmin(AuditModelView, model=Categories):
     column_list = [Categories.name]
+    form_columns = [Categories.name]
     column_searchable_list = [Categories.name]
     name = "Categoria"
     name_plural = "Categorias"
@@ -236,6 +240,7 @@ class CategoryAdmin(AuditModelView, model=Categories):
 
 class GoodsAdmin(AuditModelView, model=Goods):
     column_list = [Goods.id, Goods.name, Goods.price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
+    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category_id]
     column_searchable_list = [Goods.name]
     column_sortable_list = [Goods.id, Goods.name, Goods.price]
     name = "Producto"
@@ -248,11 +253,43 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
         ItemValues.id, ItemValues.item_id, ItemValues.account_username, ItemValues.account_password,
         ItemValues.account_url, ItemValues.status, ItemValues.is_infinity, ItemValues.assigned_user_id,
     ]
+    form_columns = [
+        ItemValues.item_id,
+        ItemValues.account_username,
+        ItemValues.account_password,
+        ItemValues.account_url,
+        ItemValues.value,
+        ItemValues.is_infinity,
+        ItemValues.status,
+        ItemValues.assigned_user_id,
+    ]
     column_searchable_list = [ItemValues.value, ItemValues.account_username, ItemValues.account_url]
     column_sortable_list = [ItemValues.id, ItemValues.item_id]
     name = "Credencial"
     name_plural = "Credenciales"
     icon = "fa-solid fa-warehouse"
+
+    form_args = {
+        "value": {
+            "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
+        },
+        "status": {
+            "description": "Usa 'available' para stock disponible. Los productos vendidos pasan a 'assigned'.",
+        },
+        "account_username": {
+            "description": "Usuario de la cuenta entregada al comprador.",
+        },
+        "account_password": {
+            "description": "Contrasena de la cuenta entregada al comprador.",
+        },
+        "account_url": {
+            "description": "URL de acceso o login del servicio.",
+        },
+    }
+
+    async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
+        if not data.get("status"):
+            model.status = "available"
 
 
 class BoughtGoodsAdmin(ModelView, model=BoughtGoods):

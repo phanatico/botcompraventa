@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import func, select, exists, and_
+from sqlalchemy import func, select, exists, and_, or_
 from sqlalchemy import desc
 from bot.database import Database
 from bot.database.models import (
@@ -12,10 +12,20 @@ from bot.database.models.main import PromoCodes, Reviews
 async def query_categories(offset: int = 0, limit: int = 10, count_only: bool = False) -> Any:
     """Query categories with pagination"""
     async with Database().session() as s:
+        category_has_stock = exists().where(
+            and_(
+                ItemValues.item_id == Goods.id,
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status.is_(None),
+                ),
+            )
+        )
         available_goods = exists().where(
             and_(
                 Goods.category_id == Categories.id,
                 Goods.is_active.is_(True),
+                category_has_stock,
             )
         )
         if count_only:
@@ -44,7 +54,10 @@ async def query_items_in_category(category_name: str, offset: int = 0, limit: in
         available_stock = exists().where(
             and_(
                 ItemValues.item_id == Goods.id,
-                ItemValues.status == "available",
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status.is_(None),
+                ),
             )
         )
         query = select(Goods.name).where(
