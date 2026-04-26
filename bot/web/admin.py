@@ -167,7 +167,6 @@ class UserAdmin(AuditModelView, model=User):
     form_columns = [User.telegram_id, User.username, User.first_name, User.balance, User.role_id,
                     User.referral_id, User.is_customer_active, User.is_blocked]
     form_include_pk = True
-    can_create = False
     column_searchable_list = [User.telegram_id, User.username, User.first_name]
     column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
@@ -176,15 +175,24 @@ class UserAdmin(AuditModelView, model=User):
     icon = "fa-solid fa-users"
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
-        if is_created:
-            return
-
-        original_telegram_id = _extract_original_user_id(request, model)
         desired_telegram_id = data.get("telegram_id", getattr(model, "telegram_id", None))
         try:
             desired_telegram_id = int(desired_telegram_id) if desired_telegram_id is not None else None
         except (TypeError, ValueError):
             raise ValueError("Telegram ID no valido.")
+
+        if is_created:
+            if not desired_telegram_id:
+                raise ValueError("Debes indicar un Telegram ID valido.")
+
+            async with Database().session() as s:
+                existing_target = await s.get(User, desired_telegram_id)
+                if existing_target:
+                    raise ValueError("Ya existe un usuario con ese Telegram ID.")
+            model.telegram_id = desired_telegram_id
+            return
+
+        original_telegram_id = _extract_original_user_id(request, model)
 
         async with Database().session() as s:
             persisted = await s.get(User, original_telegram_id) if original_telegram_id else None
@@ -296,12 +304,7 @@ class GoodsAdmin(AuditModelView, model=Goods):
     icon = "fa-solid fa-box"
     form_args = {
         "category": {
-            "description": "Escribe al menos 1 letra y selecciona la categoria correcta de la lista.",
-        },
-    }
-    form_ajax_refs = {
-        "category": {
-            "fields": ("name",),
+            "description": "Selecciona la categoria del producto en la lista.",
         },
     }
 
@@ -329,7 +332,7 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
 
     form_args = {
         "item": {
-            "description": "Escribe al menos 1 letra y selecciona el producto correcto de la lista.",
+            "description": "Selecciona el producto al que pertenece esta credencial en la lista.",
         },
         "value": {
             "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
@@ -345,11 +348,6 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
         },
         "account_url": {
             "description": "URL de acceso o login del servicio.",
-        },
-    }
-    form_ajax_refs = {
-        "item": {
-            "fields": ("name",),
         },
     }
 
