@@ -45,6 +45,29 @@ def _extract_original_user_id(request: Request, model: Any) -> int | None:
         return None
 
 
+def _extract_related_id(value: Any, *attribute_names: str) -> int | None:
+    if value is None:
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.isdigit():
+            return int(raw)
+        return None
+
+    for attr in attribute_names:
+        attr_value = getattr(value, attr, None)
+        if isinstance(attr_value, int):
+            return attr_value
+        if isinstance(attr_value, str) and attr_value.strip().isdigit():
+            return int(attr_value.strip())
+
+    return None
+
+
 class LoginRateLimiter:
     """In-memory rate limiter for login attempts by IP."""
 
@@ -303,24 +326,32 @@ class CategoryAdmin(AuditModelView, model=Categories):
 
 class GoodsAdmin(AuditModelView, model=Goods):
     column_list = [Goods.id, Goods.name, Goods.price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
-    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category_id]
+    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category]
     column_searchable_list = [Goods.name]
     column_sortable_list = [Goods.id, Goods.name, Goods.price]
     name = "Producto"
     name_plural = "Productos"
     icon = "fa-solid fa-box"
     form_args = {
-        "category_id": {
-            "description": "ID numerico de la categoria. Crea primero la categoria y usa aqui el ID que ves en la tabla de Categorias.",
+        "category": {
+            "description": "Selecciona aqui la categoria del producto.",
+        },
+    }
+    form_ajax_refs = {
+        "category": {
+            "fields": ("name",),
         },
     }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
-        raw_category_id = data.get("category_id", getattr(model, "category_id", None))
-        try:
-            category_id = int(raw_category_id)
-        except (TypeError, ValueError):
-            raise ValueError("Debes indicar un category_id numerico valido.")
+        category_id = (
+            _extract_related_id(data.get("category"), "id", "category_id")
+            or _extract_related_id(getattr(model, "category", None), "id", "category_id")
+            or _extract_related_id(data.get("category_id"), "id", "category_id")
+            or _extract_related_id(getattr(model, "category_id", None), "id", "category_id")
+        )
+        if not category_id:
+            raise ValueError("Debes seleccionar una categoria valida.")
 
         async with Database().session() as s:
             category_exists = await s.get(Categories, category_id)
@@ -336,7 +367,7 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
         ItemValues.account_url, ItemValues.status, ItemValues.is_infinity, ItemValues.assigned_user_id,
     ]
     form_columns = [
-        ItemValues.item_id,
+        ItemValues.item,
         ItemValues.account_username,
         ItemValues.account_password,
         ItemValues.account_url,
@@ -352,8 +383,8 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     icon = "fa-solid fa-warehouse"
 
     form_args = {
-        "item_id": {
-            "description": "ID numerico del producto al que pertenece esta credencial. Usa el ID que ves en la tabla de Productos.",
+        "item": {
+            "description": "Selecciona aqui el producto al que pertenece esta credencial.",
         },
         "value": {
             "description": "Opcional. Puedes dejarlo vacio si vas a vender usuario, contrasena y URL por separado.",
@@ -371,13 +402,21 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
             "description": "URL de acceso o login del servicio.",
         },
     }
+    form_ajax_refs = {
+        "item": {
+            "fields": ("name",),
+        },
+    }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
-        raw_item_id = data.get("item_id", getattr(model, "item_id", None))
-        try:
-            item_id = int(raw_item_id)
-        except (TypeError, ValueError):
-            raise ValueError("Debes indicar un item_id numerico valido.")
+        item_id = (
+            _extract_related_id(data.get("item"), "id", "item_id")
+            or _extract_related_id(getattr(model, "item", None), "id", "item_id")
+            or _extract_related_id(data.get("item_id"), "id", "item_id")
+            or _extract_related_id(getattr(model, "item_id", None), "id", "item_id")
+        )
+        if not item_id:
+            raise ValueError("Debes seleccionar un producto valido.")
 
         async with Database().session() as s:
             goods_exists = await s.get(Goods, item_id)
