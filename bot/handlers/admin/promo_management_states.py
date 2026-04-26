@@ -101,7 +101,11 @@ async def _show_promo_view(message, promo_id: int):
         text = localize(
             "admin.promo.detail",
             code=promo.code,
-            discount_type=promo.discount_type,
+            discount_type={
+                "percent": localize("admin.promo.type.percent"),
+                "fixed": localize("admin.promo.type.fixed"),
+                "balance": localize("admin.promo.type.balance"),
+            }.get(promo.discount_type, promo.discount_type),
             discount_value=promo.discount_value,
             current_uses=promo.current_uses,
             max_uses=promo.max_uses or "∞",

@@ -17,6 +17,7 @@ async def query_categories(offset: int = 0, limit: int = 10, count_only: bool = 
                 ItemValues.item_id == Goods.id,
                 or_(
                     ItemValues.status == "available",
+                    ItemValues.status == "",
                     ItemValues.status.is_(None),
                 ),
             )
@@ -56,6 +57,7 @@ async def query_items_in_category(category_name: str, offset: int = 0, limit: in
                 ItemValues.item_id == Goods.id,
                 or_(
                     ItemValues.status == "available",
+                    ItemValues.status == "",
                     ItemValues.status.is_(None),
                 ),
             )

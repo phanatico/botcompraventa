@@ -232,6 +232,7 @@ class RoleAdmin(AuditModelView, model=Role):
 class CategoryAdmin(AuditModelView, model=Categories):
     column_list = [Categories.name]
     form_columns = [Categories.name]
+    form_excluded_columns = [Categories.items]
     column_searchable_list = [Categories.name]
     name = "Categoria"
     name_plural = "Categorias"
@@ -240,12 +241,22 @@ class CategoryAdmin(AuditModelView, model=Categories):
 
 class GoodsAdmin(AuditModelView, model=Goods):
     column_list = [Goods.id, Goods.name, Goods.price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
-    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category_id]
+    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category]
     column_searchable_list = [Goods.name]
     column_sortable_list = [Goods.id, Goods.name, Goods.price]
     name = "Producto"
     name_plural = "Productos"
     icon = "fa-solid fa-box"
+
+    form_ajax_refs = {
+        "category": {
+            "fields": ("name",),
+        },
+    }
+
+    async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
+        if getattr(model, "category", None) is not None and not getattr(model, "category_id", None):
+            model.category_id = model.category.id
 
 
 class ItemValuesAdmin(AuditModelView, model=ItemValues):
@@ -254,7 +265,7 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
         ItemValues.account_url, ItemValues.status, ItemValues.is_infinity, ItemValues.assigned_user_id,
     ]
     form_columns = [
-        ItemValues.item_id,
+        ItemValues.item,
         ItemValues.account_username,
         ItemValues.account_password,
         ItemValues.account_url,
@@ -268,6 +279,12 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     name = "Credencial"
     name_plural = "Credenciales"
     icon = "fa-solid fa-warehouse"
+
+    form_ajax_refs = {
+        "item": {
+            "fields": ("name",),
+        },
+    }
 
     form_args = {
         "value": {
@@ -288,6 +305,8 @@ class ItemValuesAdmin(AuditModelView, model=ItemValues):
     }
 
     async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
+        if getattr(model, "item", None) is not None and not getattr(model, "item_id", None):
+            model.item_id = model.item.id
         if not data.get("status"):
             model.status = "available"
 

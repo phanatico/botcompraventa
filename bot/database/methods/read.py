@@ -237,6 +237,7 @@ async def select_item_values_amount(item_name: str) -> int:
                 or_(
                     ItemValues.is_infinity.is_(True),
                     ItemValues.status == "available",
+                    ItemValues.status == "",
                     ItemValues.status.is_(None),
                 )
             )
@@ -253,6 +254,7 @@ async def check_value(item_name: str) -> bool:
                 ItemValues.is_infinity.is_(True),
                 or_(
                     ItemValues.status == "available",
+                    ItemValues.status == "",
                     ItemValues.status.is_(None),
                 ),
             ))

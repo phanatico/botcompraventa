@@ -130,6 +130,7 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                         ItemValues.item_id == goods.id,
                         or_(
                             ItemValues.status == "available",
+                            ItemValues.status == "",
                             ItemValues.status.is_(None),
                         ),
                     )
@@ -388,6 +389,7 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                         ItemValues.item_id == goods.id,
                         or_(
                             ItemValues.status == "available",
+                            ItemValues.status == "",
                             ItemValues.status.is_(None),
                         ),
                     )
