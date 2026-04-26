@@ -293,7 +293,6 @@ class RoleAdmin(AuditModelView, model=Role):
 class CategoryAdmin(AuditModelView, model=Categories):
     column_list = [Categories.name]
     form_columns = [Categories.name]
-    form_excluded_columns = [Categories.items]
     column_searchable_list = [Categories.name]
     name = "Categoria"
     name_plural = "Categorias"
