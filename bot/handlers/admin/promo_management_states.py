@@ -113,10 +113,10 @@ async def _show_promo_view(message, promo_id: int):
             is_active="✅" if promo.is_active else "⛔",
         )
 
-    toggle_text = "⛔ Деактивировать" if promo.is_active else "✅ Активировать"
+    toggle_text = "Desactivar" if promo.is_active else "Activar"
     buttons = [
         (toggle_text, f"promo_toggle_{promo_id}"),
-        ("🗑 Удалить", f"promo_d_{promo_id}"),
+        ("Eliminar", f"promo_d_{promo_id}"),
         (localize("btn.back"), "promo_mgmt"),
     ]
     await message.edit_text(text, reply_markup=simple_buttons(buttons))
