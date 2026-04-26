@@ -14,6 +14,8 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
 from starlette.routing import Route
 from sqlalchemy import text, select
 
@@ -1662,6 +1664,60 @@ class BulkAccountsSidebar(BaseView):
         return _embed(self, request, "/tools/cuentas/bulk-existing", "Bulk cuentas")
 
 
+_TOOLS_LAUNCHER_HTML = """
+<div id="tools-launcher" style="position:fixed;top:14px;right:14px;z-index:9999;display:flex;gap:8px;flex-wrap:wrap;font-family:Arial,sans-serif">
+  <a href="/tools/purchases" title="Mis Compras" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0ea5e9,#1d4ed8);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🛒 Mis Compras</a>
+  <a href="/tools/stock" title="Stock" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#16a34a,#22c55e);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">📦 Stock</a>
+  <a href="/tools" title="Herramientas" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🛠 Herramientas</a>
+  <a href="/tools/cuentas/bulk-unique" title="Bulk productos unicos" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#f59e0b,#fbbf24);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">⚡ Bulk unicos</a>
+  <a href="/tools/cuentas/bulk-existing" title="Bulk cuentas" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#475569,#64748b);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🧾 Bulk cuentas</a>
+</div>
+"""
+
+
+class ToolsLauncherMiddleware(BaseHTTPMiddleware):
+    """Inject a floating launcher with links to /tools/* on every /admin HTML page.
+
+    Ensures the user can always jump from the old SQLAdmin panel to the new
+    dashboards even if the sidebar BaseView entries are not visible.
+    Only touches HTML responses under /admin and never modifies styles, so
+    SQLAdmin tables/forms/modals stay intact.
+    """
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/admin"):
+            return response
+        # Skip the login page so the launcher does not show before auth.
+        if path.rstrip("/").endswith("/admin/login"):
+            return response
+        ctype = response.headers.get("content-type", "")
+        if "text/html" not in ctype.lower():
+            return response
+
+        try:
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+            body = b"".join(chunks).decode("utf-8", errors="ignore")
+        except Exception:
+            return response
+
+        if "</body>" in body:
+            body = body.replace("</body>", _TOOLS_LAUNCHER_HTML + "</body>", 1)
+        else:
+            body = body + _TOOLS_LAUNCHER_HTML
+
+        new_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+        return StarletteResponse(
+            content=body,
+            status_code=response.status_code,
+            headers=new_headers,
+            media_type="text/html",
+        )
+
+
 # App Factory
 def create_admin_app() -> Starlette:
 
@@ -1680,6 +1736,7 @@ def create_admin_app() -> Starlette:
     ] + export_routes
 
     app = Starlette(routes=routes)
+    app.add_middleware(ToolsLauncherMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=EnvKeys.SECRET_KEY, max_age=1800)
 
     auth_backend = AdminAuth(secret_key=EnvKeys.SECRET_KEY)
