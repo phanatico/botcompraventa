@@ -1,7 +1,6 @@
 import logging
 import time
 from typing import Any
-from decimal import Decimal
 
 from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
@@ -16,7 +15,6 @@ from markupsafe import Markup
 
 from bot.misc import EnvKeys
 from bot.database.methods.audit import log_audit
-from bot.database.methods.transactions import admin_balance_change
 from bot.database.methods.update import change_user_telegram_id
 
 logger = logging.getLogger(__name__)
@@ -227,16 +225,6 @@ class UserAdmin(AuditModelView, model=User):
                 request.state._pending_telegram_id_change = (original_telegram_id, desired_telegram_id)
                 model.telegram_id = original_telegram_id
 
-            if "balance" in data:
-                old_balance = Decimal(str(persisted.balance or 0))
-                new_balance = Decimal(str(data.get("balance") or model.balance or 0))
-                delta = new_balance - old_balance
-                request.state._pending_balance_delta = delta
-
-                # Avoid double-applying the balance if SQLAdmin writes the edited value directly.
-                model.balance = old_balance
-
-
     async def after_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
         final_telegram_id = getattr(model, "telegram_id", None)
         pending_telegram_id_change = getattr(request.state, "_pending_telegram_id_change", None)
@@ -258,9 +246,6 @@ class UserAdmin(AuditModelView, model=User):
                 pass
 
         await super().after_model_change(data, model, is_created, request)
-        delta = getattr(request.state, "_pending_balance_delta", None)
-        if not is_created and delta and delta != 0:
-            await admin_balance_change(final_telegram_id or model.telegram_id, delta)
 
 
 _PERM_FLAGS = [
