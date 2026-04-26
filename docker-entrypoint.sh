@@ -48,6 +48,11 @@ chown botuser:botgroup /app/logs/bot.log /app/logs/audit.log
 # Set ownership on app directory itself (but not recursively to avoid slowdown)
 chown botuser:botgroup /app
 
+if [ "$#" -gt 0 ]; then
+    echo "Custom command detected. Skipping default bot startup."
+    exec gosu botuser "$@"
+fi
+
 echo "Permissions configured. Running migrations..."
 
 # Run migrations separately — if they fail, set -e stops the container before bot starts
