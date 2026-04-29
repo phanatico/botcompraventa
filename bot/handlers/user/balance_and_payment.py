@@ -8,7 +8,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.database.methods import get_user_referral, buy_item_transaction, process_payment_with_referral, create_pending_payment
-from bot.database.methods.read import get_item_info_cached, get_item_stock_summary_cached, get_manual_recharge_text
+from bot.database.methods.read import (
+    get_item_info_cached, get_item_stock_summary_cached, get_manual_recharge_text,
+    get_admin_user_ids, get_total_available_stock, get_item_stock_summary, check_user_cached,
+)
 from bot.keyboards import back, payment_menu, close, get_payment_choice
 from bot.logger_mesh import logger
 from bot.database.methods.audit import log_audit
@@ -43,6 +46,31 @@ async def _notify_referrer_bonus(bot, user_id: int, amount: int, payer_name: str
             )
     except (TelegramBadRequest, TelegramForbiddenError) as e:
         logger.error(f"Failed to send referral notification to user {referral_id}: {e}")
+
+
+async def _notify_admins_about_purchase(bot, user_id: int, purchase_data: dict, username: str) -> None:
+    user = await check_user_cached(user_id)
+    admin_ids = await get_admin_user_ids()
+    notify_ids = sorted({*admin_ids, int(EnvKeys.OWNER_ID)})
+    stock = await get_item_stock_summary(purchase_data["item_name"])
+    total_stock = await get_total_available_stock()
+    text = (
+        "🛒 <b>Nueva compra</b>\n"
+        f"Producto: <b>{purchase_data['item_name']}</b>\n"
+        f"Cliente: @{username or '-'}\n"
+        f"Telegram ID: <code>{user_id}</code>\n"
+        f"Email: {user.get('email') or '-'}\n"
+        f"WhatsApp: {user.get('whatsapp') or '-'}\n"
+        f"Créditos gastados: <b>{purchase_data['price']}</b>\n"
+        f"Pedido: <code>{purchase_data['unique_id']}</code>\n"
+        f"Stock restante del producto: <b>{stock['display']}</b>\n"
+        f"Stock total restante: <b>{total_stock}</b>"
+    )
+    for admin_id in notify_ids:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception:
+            continue
 
 
 @router.callback_query(F.data == "replenish_balance")
@@ -591,6 +619,8 @@ async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
             )
         except Exception as e:
             await log_audit("purchase", level="ERROR", user_id=user_id, resource_type="Item", details=f"log_failed: {e}")
+
+        await _notify_admins_about_purchase(call.bot, user_id, purchase_data, call.from_user.username or call.from_user.first_name or "-")
 
     except Exception as e:
         logger.error(f"Critical error in purchase handler: {e}")

@@ -5,7 +5,10 @@ from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.database.methods.create import add_to_cart
-from bot.database.methods.read import get_cart_items, get_cart_count
+from bot.database.methods.read import (
+    get_cart_items, get_cart_count, get_admin_user_ids,
+    get_item_stock_summary, get_total_available_stock, check_user_cached,
+)
 from bot.database.methods.delete import remove_from_cart, clear_cart
 from bot.database.methods.transactions import checkout_cart_transaction
 from bot.keyboards.inline import back, simple_buttons
@@ -77,6 +80,36 @@ async def _show_cart(call: CallbackQuery):
         reply_markup=simple_buttons(buttons),
         parse_mode="HTML",
     )
+
+
+async def _notify_admins_about_cart_purchase(call: CallbackQuery, results: list[dict], total: int | float) -> None:
+    user_id = call.from_user.id
+    user = await check_user_cached(user_id)
+    admin_ids = await get_admin_user_ids()
+    notify_ids = sorted({*admin_ids, int(EnvKeys.OWNER_ID)})
+    total_stock = await get_total_available_stock()
+    item_lines = []
+    for result in results:
+        stock = await get_item_stock_summary(result["item_name"])
+        item_lines.append(f"• {result['item_name']} — gastado {result['price']} créditos — stock restante {stock['display']}")
+
+    text = (
+        "🛒 <b>Nueva compra desde carrito</b>\n"
+        f"Cliente: @{call.from_user.username or '-'}\n"
+        f"Nombre: {call.from_user.first_name or '-'}\n"
+        f"Telegram ID: <code>{user_id}</code>\n"
+        f"Email: {user.get('email') or '-'}\n"
+        f"WhatsApp: {user.get('whatsapp') or '-'}\n"
+        f"Créditos totales gastados: <b>{total}</b>\n"
+        f"Items: <b>{len(results)}</b>\n"
+        + "\n".join(item_lines) +
+        f"\nStock total restante: <b>{total_stock}</b>"
+    )
+    for admin_id in notify_ids:
+        try:
+            await call.bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception:
+            continue
 
 
 @router.callback_query(F.data == "add_to_cart")
@@ -209,6 +242,7 @@ async def cart_checkout_confirm_handler(call: CallbackQuery, state: FSMContext):
         resource_type="Cart",
         details=f"items={len(results)}, total={sum(r['price'] for r in results)}",
     )
+    await _notify_admins_about_cart_purchase(call, results, total)
 
 
 @router.callback_query(F.data == "cart_receipt")

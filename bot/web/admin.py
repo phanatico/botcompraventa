@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -5,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from typing import Any
+import aiohttp
 
 _TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 
@@ -267,6 +269,20 @@ async def _reset_database_contents() -> None:
             "user_stats:*", "user_items:*",
         ):
             await cache.invalidate_pattern(pattern)
+
+
+async def _telegram_bot_api_call(method: str, *, form_data: aiohttp.FormData | None = None) -> tuple[bool, str]:
+    url = f"https://api.telegram.org/bot{EnvKeys.TOKEN}/{method}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=form_data) as response:
+                payload = await response.json(content_type=None)
+    except Exception as exc:
+        return False, str(exc)
+
+    if payload.get("ok"):
+        return True, ""
+    return False, str(payload.get("description") or "Telegram API error")
 
 
 def _extract_original_user_id(request: Request, model: Any) -> int | None:
@@ -942,6 +958,7 @@ async def config_dashboard(request: Request) -> HTMLResponse:
     embed = bool(request.query_params.get("embed"))
     body = f"""
     <p>Configura desde aquí los textos visibles del bot y los planes de créditos, sin tocar el <code>.env</code>.</p>
+    <p><a href="/tools/config/photo{'?embed=1' if embed else ''}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#0ea5e9;color:white;text-decoration:none;font-weight:700">Foto del bot</a></p>
     <form method="post">
       <label>MOTD / Bienvenida del menú principal</label>
       <textarea name="menu_motd" style="min-height:120px">{escape(values.get("menu_motd", ""))}</textarea>
@@ -975,6 +992,54 @@ async def config_dashboard(request: Request) -> HTMLResponse:
     </table>
     """
     return _render_tools_page("Config del bot", body, message=message, embedded=embed)
+
+
+async def bot_photo_dashboard(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    if request.method == "POST":
+        form = await request.form()
+        action = str(form.get("action") or "upload").strip()
+        if action == "remove":
+            ok, err = await _telegram_bot_api_call("removeMyProfilePhoto")
+            message = "Foto del bot eliminada." if ok else f"No se pudo eliminar la foto del bot: {err}"
+        else:
+            upload = form.get("profile_photo")
+            if not upload or not getattr(upload, "filename", ""):
+                message = "No has seleccionado ninguna imagen."
+            else:
+                filename = str(upload.filename or "").lower()
+                content_type = str(getattr(upload, "content_type", "") or "").lower()
+                if not (filename.endswith(".jpg") or filename.endswith(".jpeg") or "jpeg" in content_type or "jpg" in content_type):
+                    message = "La foto del bot debe estar en formato JPG."
+                else:
+                    file_bytes = await upload.read()
+                    payload = {"type": "static", "photo": "attach://profile_photo"}
+                    form_data = aiohttp.FormData()
+                    form_data.add_field("photo", json.dumps(payload))
+                    form_data.add_field("profile_photo", file_bytes, filename=upload.filename, content_type=upload.content_type or "image/jpeg")
+                    ok, err = await _telegram_bot_api_call("setMyProfilePhoto", form_data=form_data)
+                    message = "Foto del bot actualizada." if ok else f"No se pudo actualizar la foto del bot: {err}"
+
+    embed = bool(request.query_params.get("embed"))
+    body = """
+    <p>Sube una imagen JPG para cambiar la foto del bot directamente desde el panel.</p>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="upload">
+      <label>Foto JPG</label>
+      <input type="file" name="profile_photo" accept=".jpg,.jpeg,image/jpeg">
+      <div class="hint">Telegram exige foto estÃ¡tica en formato JPG.</div>
+      <button type="submit">Actualizar foto del bot</button>
+    </form>
+    <form method="post">
+      <input type="hidden" name="action" value="remove">
+      <button type="submit" style="background:#dc2626">Quitar foto del bot</button>
+    </form>
+    """
+    return _render_tools_page("Foto del bot", body, message=message, embedded=embed)
 
 
 async def reset_db_dashboard(request: Request) -> HTMLResponse:
@@ -1945,6 +2010,7 @@ def create_admin_app() -> Starlette:
         Route("/tools/stock", stock_dashboard),
         Route("/tools/purchases", purchases_dashboard),
         Route("/tools/config", config_dashboard, methods=["GET", "POST"]),
+        Route("/tools/config/photo", bot_photo_dashboard, methods=["GET", "POST"]),
         Route("/tools/reset-db", reset_db_dashboard, methods=["GET", "POST"]),
         Route("/tools/products/new", quick_new_product, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-existing", bulk_accounts_existing, methods=["GET", "POST"]),
