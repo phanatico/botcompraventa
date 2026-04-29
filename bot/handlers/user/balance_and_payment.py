@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.database.methods import get_user_referral, buy_item_transaction, process_payment_with_referral, create_pending_payment
-from bot.database.methods.read import get_item_info_cached, get_item_stock_summary_cached
+from bot.database.methods.read import get_item_info_cached, get_item_stock_summary_cached, get_manual_recharge_text
 from bot.keyboards import back, payment_menu, close, get_payment_choice
 from bot.logger_mesh import logger
 from bot.database.methods.audit import log_audit
@@ -47,6 +47,12 @@ async def _notify_referrer_bonus(bot, user_id: int, amount: int, payer_name: str
 @router.callback_query(F.data == "replenish_balance")
 async def replenish_balance_callback_handler(call: CallbackQuery, state: FSMContext):
     """Show manual top-up instructions via Telegram."""
+    manual_text = (await get_manual_recharge_text()).strip()
+    if manual_text:
+        try:
+            manual_text = manual_text.format(currency=EnvKeys.PAY_CURRENCY)
+        except Exception:
+            pass
     support_target = EnvKeys.HELPER_ID
     markup = back("profile")
     if support_target:
@@ -56,7 +62,7 @@ async def replenish_balance_callback_handler(call: CallbackQuery, state: FSMCont
             [InlineKeyboardButton(text=localize("btn.back"), callback_data="profile")],
         ])
     await call.message.edit_text(
-        localize("payments.manual.instructions", currency=EnvKeys.PAY_CURRENCY),
+        (manual_text if manual_text else localize("payments.manual.instructions", currency=EnvKeys.PAY_CURRENCY)),
         reply_markup=markup,
     )
     await state.clear()

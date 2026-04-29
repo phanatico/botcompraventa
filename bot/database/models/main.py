@@ -101,6 +101,7 @@ class User(Database.BASE):
     email = Column(String(255), nullable=True, index=True)
     whatsapp = Column(String(32), nullable=True, index=True)
     balance = Column(Numeric(12, 2), nullable=False, default=0)
+    credit_balance = Column(Integer, nullable=False, default=0, index=True)
     referral_id = Column(BigInteger, ForeignKey('users.telegram_id', ondelete="SET NULL"), nullable=True, index=True)
     registration_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     is_blocked = Column(Boolean, default=False, index=True)
@@ -129,7 +130,7 @@ class User(Database.BASE):
     def __init__(self, telegram_id: int | None = None, registration_date: datetime.datetime | None = None,
                  balance=0, referral_id=None, role_id: int = 1, username: str | None = None,
                  first_name: str | None = None, email: str | None = None, whatsapp: str | None = None,
-                 is_customer_active: bool = False, **kw: Any):
+                 is_customer_active: bool = False, credit_balance: int = 0, **kw: Any):
         super().__init__(**kw)
         if telegram_id is not None:
             self.telegram_id = telegram_id
@@ -143,6 +144,7 @@ class User(Database.BASE):
         if whatsapp is not None:
             self.whatsapp = whatsapp
         self.balance = balance
+        self.credit_balance = credit_balance
         if referral_id is not None:
             self.referral_id = referral_id
         if registration_date is not None:
@@ -173,6 +175,7 @@ class Goods(Database.BASE):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), unique=True, nullable=False)
     price = Column(Numeric(12, 2), nullable=False)
+    credit_price = Column(Integer, nullable=True, index=True)
     description = Column(Text, nullable=False)
     duration_days = Column(Integer, nullable=False, default=30)
     is_renewable = Column(Boolean, nullable=False, default=True, index=True)
@@ -183,7 +186,7 @@ class Goods(Database.BASE):
 
     def __init__(self, name: str | None = None, price=None, description: str | None = None,
                  category_id: int | None = None, duration_days: int = 30,
-                 is_renewable: bool = True, is_active: bool = True, **kw: Any):
+                 is_renewable: bool = True, is_active: bool = True, credit_price: int | None = None, **kw: Any):
         super().__init__(**kw)
         if name is not None:
             self.name = name
@@ -191,6 +194,8 @@ class Goods(Database.BASE):
             self.price = price
         if description is not None:
             self.description = description
+        if credit_price is not None:
+            self.credit_price = credit_price
         self.duration_days = duration_days
         self.is_renewable = is_renewable
         self.is_active = is_active
@@ -363,6 +368,43 @@ class Payments(Database.BASE):
         UniqueConstraint('provider', 'external_id', name='uq_payment_provider_ext'),
         Index('ix_payments_status_created', 'status', 'created_at'),
     )
+
+
+class AppConfig(Database.BASE):
+    __tablename__ = "app_config"
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    def __init__(self, key: str | None = None, value: str | None = None, **kw: Any):
+        super().__init__(**kw)
+        if key is not None:
+            self.key = key
+        if value is not None:
+            self.value = value
+
+
+class CreditMovement(Database.BASE):
+    __tablename__ = "credit_movements"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey('users.telegram_id', ondelete="SET NULL"), nullable=True, index=True)
+    delta = Column(Integer, nullable=False)
+    reason = Column(String(64), nullable=False, default="manual")
+    note = Column(Text, nullable=True)
+    admin_id = Column(BigInteger, ForeignKey('users.telegram_id', ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    def __init__(self, user_id: int | None = None, delta: int = 0, reason: str = "manual",
+                 note: str | None = None, admin_id: int | None = None, **kw: Any):
+        super().__init__(**kw)
+        if user_id is not None:
+            self.user_id = user_id
+        self.delta = delta
+        self.reason = reason
+        if note is not None:
+            self.note = note
+        if admin_id is not None:
+            self.admin_id = admin_id
 
 
 class ReferralEarnings(Database.BASE):

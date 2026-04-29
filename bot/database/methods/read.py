@@ -3,14 +3,28 @@ from decimal import Decimal
 from functools import wraps
 from typing import Optional, Dict, TypeVar, Callable, Any, Coroutine
 
-from sqlalchemy import func, exists, select, or_
+from sqlalchemy import func, exists, select, or_, and_
 
 from bot.database.models import Database, User, ItemValues, Goods, Categories, Role, BoughtGoods, \
     Operations, ReferralEarnings, Permission
-from bot.database.models.main import PromoCodes, PromoCodeUsages, CartItems, Reviews
+from bot.database.models.main import PromoCodes, PromoCodeUsages, CartItems, Reviews, AppConfig
+from bot.misc import EnvKeys
 from bot.misc.caching import get_cache_manager
 
 F = TypeVar('F', bound=Callable[..., Coroutine[Any, Any, Any]])
+
+CONFIG_DEFAULTS: dict[str, str] = {
+    "menu_motd": "",
+    "rules_text": EnvKeys.RULES,
+    "buy_credits_text": (
+        "PLANES DISPONIBLES\n\n"
+        "7 USD = 5 creditos\n"
+        "12 USD = 10 creditos\n\n"
+        "1 credito = 1 codigo"
+    ),
+    "buy_credits_plans": "7|5\n12|10",
+    "manual_recharge_text": "",
+}
 
 
 def async_cached(ttl: int = 300, key_prefix: str = "") -> Callable[[F], F]:
@@ -50,6 +64,26 @@ def _obj_to_dict(obj, model) -> dict:
     return {c.key: getattr(obj, c.key) for c in model.__table__.columns}
 
 
+def _parse_credit_plans(raw: str | None) -> list[dict[str, int]]:
+    plans: list[dict[str, int]] = []
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) != 2:
+            continue
+        try:
+            usd_price = int(Decimal(parts[0]))
+            credits = int(parts[1])
+        except Exception:
+            continue
+        if usd_price <= 0 or credits <= 0:
+            continue
+        plans.append({"usd_price": usd_price, "credits": credits})
+    return plans
+
+
 # --- Async implementations ---
 
 async def check_user(telegram_id: int | str) -> Optional[dict]:
@@ -67,6 +101,83 @@ async def check_role(telegram_id: int) -> int:
             select(Role.permissions).join(User, User.role_id == Role.id).where(User.telegram_id == telegram_id)
         )
         return result.scalar() or 0
+
+
+async def get_config_value(key: str, default: str | None = None) -> str:
+    """Return app config value or default."""
+    fallback = CONFIG_DEFAULTS.get(key, default or "")
+    async with Database().session() as s:
+        value = (await s.execute(
+            select(AppConfig.value).where(AppConfig.key == key)
+        )).scalar()
+        return str(value) if value is not None else str(fallback or "")
+
+
+async def get_all_config_values() -> dict[str, str]:
+    """Return all editable config values merged with defaults."""
+    values = dict(CONFIG_DEFAULTS)
+    async with Database().session() as s:
+        rows = (await s.execute(select(AppConfig.key, AppConfig.value))).all()
+    for key, value in rows:
+        values[str(key)] = "" if value is None else str(value)
+    return values
+
+
+async def get_credit_plans() -> list[dict[str, int]]:
+    """Return configured credit plans."""
+    raw = await get_config_value("buy_credits_plans", CONFIG_DEFAULTS["buy_credits_plans"])
+    return _parse_credit_plans(raw)
+
+
+async def get_credit_shop_text() -> str:
+    """Return the editable buy-credits message."""
+    return await get_config_value("buy_credits_text", CONFIG_DEFAULTS["buy_credits_text"])
+
+
+async def get_menu_motd() -> str:
+    """Return menu MOTD or default localized title fallback caller can apply."""
+    return await get_config_value("menu_motd", "")
+
+
+async def get_rules_text() -> str:
+    """Return editable rules text."""
+    return await get_config_value("rules_text", CONFIG_DEFAULTS["rules_text"])
+
+
+async def get_manual_recharge_text() -> str:
+    """Return editable manual recharge text."""
+    return await get_config_value("manual_recharge_text", "")
+
+
+async def get_admin_user_ids() -> list[int]:
+    """Return all admin/owner Telegram IDs."""
+    async with Database().session() as s:
+        rows = (await s.execute(
+            select(User.telegram_id)
+            .join(Role, User.role_id == Role.id)
+            .where(Role.permissions.op('&')(~Permission.USE) != 0)
+            .order_by(User.telegram_id.asc())
+        )).all()
+    return [int(row[0]) for row in rows if row and row[0] is not None]
+
+
+async def get_total_available_stock() -> int:
+    """Return total available finite stock across active products."""
+    async with Database().session() as s:
+        total = (await s.execute(
+            select(func.count(ItemValues.id))
+            .join(Goods, Goods.id == ItemValues.item_id)
+            .where(
+                Goods.is_active.is_(True),
+                ItemValues.is_infinity.is_(False),
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status == "",
+                    ItemValues.status.is_(None),
+                ),
+            )
+        )).scalar() or 0
+    return int(total)
 
 
 async def get_role_id_by_name(role_name: str) -> Optional[int]:
@@ -318,6 +429,54 @@ async def get_item_stock_summary(item_name: str) -> dict:
         }
 
 
+async def get_category_stock_summary(category_name: str) -> dict:
+    """Return aggregated stock counters for a category."""
+    async with Database().session() as s:
+        category_id = (await s.execute(
+            select(Categories.id).where(Categories.name == category_name)
+        )).scalar()
+        if not category_id:
+            return {"category_name": category_name, "available": 0, "has_infinite": False, "display": "0"}
+
+        available = (await s.execute(
+            select(func.count(ItemValues.id))
+            .join(Goods, Goods.id == ItemValues.item_id)
+            .where(
+                Goods.category_id == category_id,
+                Goods.is_active.is_(True),
+                ItemValues.is_infinity.is_(False),
+                or_(
+                    ItemValues.status == "available",
+                    ItemValues.status == "",
+                    ItemValues.status.is_(None),
+                ),
+            )
+        )).scalar() or 0
+
+        has_infinite = bool((await s.execute(
+            select(exists().where(
+                and_(
+                    Goods.id == ItemValues.item_id,
+                    Goods.category_id == category_id,
+                    Goods.is_active.is_(True),
+                    ItemValues.is_infinity.is_(True),
+                    or_(
+                        ItemValues.status == "available",
+                        ItemValues.status == "",
+                        ItemValues.status.is_(None),
+                    ),
+                )
+            ))
+        )).scalar())
+
+        return {
+            "category_name": category_name,
+            "available": int(available),
+            "has_infinite": has_infinite,
+            "display": "∞" if has_infinite else str(int(available)),
+        }
+
+
 async def get_stock_dashboard_rows() -> list[dict]:
     """Return product rows with real stock counters for admin tools."""
     async with Database().session() as s:
@@ -326,6 +485,7 @@ async def get_stock_dashboard_rows() -> list[dict]:
                 Goods.id,
                 Goods.name,
                 Goods.price,
+                Goods.credit_price,
                 Goods.is_active,
                 Categories.name.label("category_name"),
             )
@@ -341,6 +501,7 @@ async def get_stock_dashboard_rows() -> list[dict]:
             "id": row.id,
             "name": row.name,
             "price": row.price,
+            "credit_price": row.credit_price,
             "is_active": row.is_active,
             "category_name": row.category_name,
             **stock,

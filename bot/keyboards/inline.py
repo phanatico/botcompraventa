@@ -13,6 +13,7 @@ def main_menu(role: int, channel: str | None = None, helper: str | None = None) 
     kb = InlineKeyboardBuilder()
     kb.button(text=localize("btn.shop"), callback_data="shop")
     kb.button(text=localize("btn.rules"), callback_data="rules")
+    kb.button(text=localize("btn.buy_credits"), callback_data="buy_credits")
     kb.button(text=localize("btn.profile"), callback_data="profile")
     if helper:
         kb.button(text=localize("btn.support"), url=f"tg://user?id={helper}")
@@ -20,7 +21,7 @@ def main_menu(role: int, channel: str | None = None, helper: str | None = None) 
         kb.button(text=localize("btn.channel"), url=f"https://t.me/{channel.lstrip('@')}")
     if Permission.has_any_admin_perm(role):
         kb.button(text=localize("btn.admin_menu"), callback_data="console")
-    kb.adjust(2)
+    kb.adjust(2, 2)
     return kb.as_markup()
 
 
@@ -81,7 +82,10 @@ def back(cb: str = "menu", text: str | None = None) -> InlineKeyboardMarkup:
     """
     One 'Back' button.
     """
-    return simple_buttons([(text or localize("btn.back"), cb)])
+    return simple_buttons([
+        (text or localize("btn.back"), cb),
+        (localize("btn.home"), "back_to_menu"),
+    ], per_row=2)
 
 
 def close() -> InlineKeyboardMarkup:
@@ -124,7 +128,10 @@ async def lazy_paginated_keyboard(
         kb.row(*nav_buttons)
 
     if back_cb:
-        kb.row(InlineKeyboardButton(text=back_text or localize("btn.back"), callback_data=back_cb))
+        kb.row(
+            InlineKeyboardButton(text=back_text or localize("btn.back"), callback_data=back_cb),
+            InlineKeyboardButton(text=localize("btn.home"), callback_data="back_to_menu"),
+        )
 
     return kb.as_markup()
 
@@ -153,7 +160,8 @@ def item_info(
         if has_purchased:
             kb.button(text=localize("btn.leave_review"), callback_data=f"review:{item_name}")
     kb.button(text=localize("btn.back"), callback_data=back_data)
-    kb.adjust(2)
+    kb.button(text=localize("btn.home"), callback_data="back_to_menu")
+    kb.adjust(2, 2)
     return kb.as_markup()
 
 
@@ -165,6 +173,7 @@ def payment_menu(pay_url: str) -> InlineKeyboardMarkup:
     kb.button(text=localize("btn.pay"), url=pay_url)
     kb.button(text=localize("btn.check_payment"), callback_data="check")
     kb.button(text=localize("btn.back"), callback_data="profile")
+    kb.button(text=localize("btn.home"), callback_data="back_to_menu")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -179,6 +188,7 @@ def get_payment_choice() -> InlineKeyboardMarkup:
             (localize("btn.pay.stars"), "pay_stars"),
             (localize("btn.pay.tg"), "pay_fiat"),
             (localize("btn.back"), "replenish_balance"),
+            (localize("btn.home"), "back_to_menu"),
         ],
         per_row=1,
     )
@@ -192,7 +202,8 @@ def question_buttons(question: str, back_data: str) -> InlineKeyboardMarkup:
     kb.button(text=localize("btn.yes"), callback_data=f"{question}_yes")
     kb.button(text=localize("btn.no"), callback_data=f"{question}_no")
     kb.button(text=localize("btn.back"), callback_data=back_data)
-    kb.adjust(2)
+    kb.button(text=localize("btn.home"), callback_data="back_to_menu")
+    kb.adjust(2, 2)
     return kb.as_markup()
 
 
@@ -230,5 +241,6 @@ def referral_system_keyboard(has_referrals: bool = False, has_earnings: bool = F
         kb.button(text=localize("btn.view_earnings"), callback_data="view_all_earnings")
 
     kb.button(text=localize("btn.back"), callback_data="profile")
+    kb.button(text=localize("btn.home"), callback_data="back_to_menu")
     kb.adjust(1)
     return kb.as_markup()

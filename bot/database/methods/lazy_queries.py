@@ -7,6 +7,7 @@ from bot.database.models import (
     ReferralEarnings, Role, Operations
 )
 from bot.database.models.main import PromoCodes, Reviews
+from bot.database.methods.read import get_category_stock_summary
 
 
 async def query_categories(offset: int = 0, limit: int = 10, count_only: bool = False) -> Any:
@@ -29,7 +30,15 @@ async def query_categories(offset: int = 0, limit: int = 10, count_only: bool = 
             .offset(offset)
             .limit(limit)
         )
-        return [row[0] for row in result.all()]
+        rows = []
+        for category_name, in result.all():
+            summary = await get_category_stock_summary(category_name)
+            rows.append({
+                "name": category_name,
+                "available": summary["available"],
+                "has_infinite": summary["has_infinite"],
+            })
+        return rows
 
 
 async def query_items_in_category(category_name: str, offset: int = 0, limit: int = 10,

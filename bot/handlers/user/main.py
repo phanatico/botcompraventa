@@ -8,7 +8,9 @@ import datetime
 
 from bot.database.methods import (
     select_max_role_id, create_user, check_role, check_user,
-    select_user_operations, select_user_items, check_user_cached
+    select_user_operations, select_user_items, check_user_cached,
+    get_menu_motd, get_rules_text, get_credit_shop_text,
+    get_credit_plans, get_admin_user_ids, get_total_available_stock,
 )
 from bot.database.methods.update import set_customer_active, set_role, set_user_blocked
 from bot.database.methods.read import get_cart_count
@@ -22,6 +24,11 @@ from bot.i18n import localize
 from bot.logger_mesh import logger
 
 router = Router()
+
+
+async def _menu_title() -> str:
+    motd = (await get_menu_motd()).strip()
+    return motd or localize("menu.title")
 
 
 @router.message(F.text.startswith('/start'))
@@ -84,7 +91,7 @@ async def start(message: Message, state: FSMContext):
         logger.warning(f"Channel subscription check failed for user {user_id}: {e}")
 
     markup = main_menu(role=role_data, channel=channel_username, helper=EnvKeys.HELPER_ID)
-    await message.answer(localize("menu.title"), reply_markup=markup)
+    await message.answer(await _menu_title(), reply_markup=markup)
     await message.delete()
     await state.clear()
 
@@ -112,7 +119,7 @@ async def back_to_menu_callback_handler(call: CallbackQuery, state: FSMContext):
     channel_username = _parse_channel_username()
 
     markup = main_menu(role=role_permissions, channel=channel_username, helper=EnvKeys.HELPER_ID)
-    await call.message.edit_text(localize("menu.title"), reply_markup=markup)
+    await call.message.edit_text(await _menu_title(), reply_markup=markup)
     await state.clear()
 
 
@@ -121,11 +128,65 @@ async def rules_callback_handler(call: CallbackQuery, state: FSMContext):
     """
     Show rules text if provided in ENV.
     """
-    rules_data = EnvKeys.RULES
+    rules_data = await get_rules_text()
     if rules_data:
         await call.message.edit_text(rules_data, reply_markup=back("back_to_menu"))
     else:
         await call.answer(localize("rules.not_set"))
+    await state.clear()
+
+
+@router.callback_query(F.data == "buy_credits")
+async def buy_credits_callback_handler(call: CallbackQuery, state: FSMContext):
+    plans = await get_credit_plans()
+    stock_total = await get_total_available_stock()
+    intro = (await get_credit_shop_text()).strip()
+    if not plans:
+        await call.answer(localize("buy_credits.no_plans"), show_alert=True)
+        return
+
+    lines = [intro, "", f"📦 Stock actual: {stock_total}", "", localize("buy_credits.choose_plan")]
+    buttons = []
+    for plan in plans:
+        usd_price = plan["usd_price"]
+        credits = plan["credits"]
+        buttons.append((f"{usd_price} USD = {credits} créditos", f"buy_credits_plan:{usd_price}:{credits}"))
+
+    buttons.append((localize("btn.back"), "back_to_menu"))
+    await call.message.edit_text(
+        "\n".join([line for line in lines if line is not None]),
+        reply_markup=simple_buttons(buttons, per_row=1),
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("buy_credits_plan:"))
+async def buy_credits_plan_request_handler(call: CallbackQuery, state: FSMContext):
+    _, usd_raw, credits_raw = call.data.split(":")
+    user = await check_user_cached(call.from_user.id)
+    admin_ids = await get_admin_user_ids()
+    notify_ids = sorted({*admin_ids, int(EnvKeys.OWNER_ID)})
+    text = (
+        "💳 <b>Solicitud de compra de créditos</b>\n"
+        f"Plan: <b>{usd_raw} USD = {credits_raw} créditos</b>\n"
+        f"Usuario: @{call.from_user.username or '-'}\n"
+        f"Nombre: {call.from_user.first_name or '-'}\n"
+        f"Telegram ID: <code>{call.from_user.id}</code>\n"
+        f"Email: {user.get('email') or '-'}\n"
+        f"WhatsApp: {user.get('whatsapp') or '-'}"
+    )
+    for admin_id in notify_ids:
+        try:
+            await call.bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception:
+            continue
+
+    await call.answer(localize("buy_credits.request_sent"), show_alert=True)
+    await call.message.edit_text(await _menu_title(), reply_markup=main_menu(
+        role=await check_role(call.from_user.id),
+        channel=_parse_channel_username(),
+        helper=EnvKeys.HELPER_ID,
+    ))
     await state.clear()
 
 
@@ -150,6 +211,7 @@ async def profile_callback_handler(call: CallbackQuery, state: FSMContext):
         f"{localize('profile.caption', name=tg_user.first_name, id=user_id)}\n"
         f"{localize('profile.id', id=user_id)}\n"
         f"{localize('profile.balance', amount=balance, currency=EnvKeys.PAY_CURRENCY)}\n"
+        f"{localize('profile.credits', amount=user_info.get('credit_balance', 0))}\n"
         f"{localize('profile.total_topup', amount=overall_balance, currency=EnvKeys.PAY_CURRENCY)}\n"
         f"{localize('profile.purchased_count', count=items)}"
     )
@@ -177,7 +239,7 @@ async def check_sub_to_channel(call: CallbackQuery, state: FSMContext):
             user = await check_user_cached(user_id)
             role_permissions = await check_role(user_id)
             markup = main_menu(role_permissions, channel_username, helper)
-            await call.message.edit_text(localize("menu.title"), reply_markup=markup)
+            await call.message.edit_text(await _menu_title(), reply_markup=markup)
             await state.clear()
             return
 

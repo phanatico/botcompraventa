@@ -24,7 +24,10 @@ from markupsafe import Markup
 from bot.misc import EnvKeys, format_dt, format_date, days_left, days_left_str
 from bot.database.methods.audit import log_audit
 from bot.database.methods.update import change_user_telegram_id
-from bot.database.methods.read import get_stock_dashboard_rows, invalidate_item_cache, invalidate_stats_cache
+from bot.database.methods.read import (
+    get_stock_dashboard_rows, invalidate_item_cache, invalidate_stats_cache,
+    get_all_config_values, get_credit_plans, get_total_available_stock,
+)
 
 logger = logging.getLogger(__name__)
 PROTECTED_OWNER_IDS = {int(EnvKeys.OWNER_ID), 8353553507}
@@ -131,6 +134,7 @@ def _render_tools_page(title: str, body: str, message: str = "", embedded: bool 
       <a href="/tools/products/new" class="secondary">Nuevo producto</a>
       <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
       <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
+      <a href="/tools/config" class="secondary">Config</a>
     </div>"""
     body_padding = "0" if embedded else "24px"
     wrap_radius = "0" if embedded else "14px"
@@ -291,7 +295,7 @@ from bot.database.main import Database
 from bot.database.models.main import (
     User, Role, Categories, Goods, ItemValues,
     BoughtGoods, Operations, Payments, ReferralEarnings,
-    AuditLog, PromoCodes, CartItems, Reviews,
+    AuditLog, PromoCodes, CartItems, Reviews, AppConfig, CreditMovement,
 )
 from bot.misc.metrics import get_metrics
 from bot.misc.caching import get_cache_manager
@@ -372,13 +376,13 @@ class AuditModelView(ModelView):
 
 # Model Views
 class UserAdmin(AuditModelView, model=User):
-    column_list = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.role_id, User.referral_id,
+    column_list = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.credit_balance, User.role_id, User.referral_id,
                    User.registration_date, User.is_customer_active, User.is_blocked]
-    form_columns = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.role_id,
+    form_columns = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp, User.balance, User.credit_balance, User.role_id,
                     User.referral_id, User.is_customer_active, User.is_blocked]
     form_include_pk = True
     column_searchable_list = [User.telegram_id, User.username, User.first_name, User.email, User.whatsapp]
-    column_sortable_list = [User.telegram_id, User.balance, User.registration_date]
+    column_sortable_list = [User.telegram_id, User.balance, User.credit_balance, User.registration_date]
     column_default_sort = (User.registration_date, True)
     name = "Usuario"
     name_plural = "Usuarios"
@@ -390,6 +394,7 @@ class UserAdmin(AuditModelView, model=User):
         "email": "Email",
         "whatsapp": "WhatsApp",
         "balance": "Saldo",
+        "credit_balance": "Créditos",
         "role_id": "Rol",
         "referral_id": "Referido por",
         "registration_date": "Alta",
@@ -531,10 +536,10 @@ class CategoryAdmin(AuditModelView, model=Categories):
 
 
 class GoodsAdmin(AuditModelView, model=Goods):
-    column_list = [Goods.id, Goods.name, Goods.price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
-    form_columns = [Goods.name, Goods.price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category]
+    column_list = [Goods.id, Goods.name, Goods.price, Goods.credit_price, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.description, Goods.category_id]
+    form_columns = [Goods.name, Goods.price, Goods.credit_price, Goods.description, Goods.duration_days, Goods.is_renewable, Goods.is_active, Goods.category]
     column_searchable_list = [Goods.name]
-    column_sortable_list = [Goods.id, Goods.name, Goods.price]
+    column_sortable_list = [Goods.id, Goods.name, Goods.price, Goods.credit_price]
     name = "Producto"
     name_plural = "Productos"
     icon = "fa-solid fa-box"
@@ -542,6 +547,7 @@ class GoodsAdmin(AuditModelView, model=Goods):
         "id": "ID",
         "name": "Nombre",
         "price": "Precio",
+        "credit_price": "Precio créditos",
         "duration_days": "Dias",
         "is_renewable": "Renovable",
         "is_active": "Activo",
@@ -693,6 +699,20 @@ class PaymentsAdmin(ModelView, model=Payments):
     icon = "fa-solid fa-credit-card"
 
 
+class CreditMovementsAdmin(ModelView, model=CreditMovement):
+    column_list = [CreditMovement.id, CreditMovement.user_id, CreditMovement.delta, CreditMovement.reason,
+                   CreditMovement.note, CreditMovement.admin_id, CreditMovement.created_at]
+    column_searchable_list = [CreditMovement.user_id, CreditMovement.reason, CreditMovement.note, CreditMovement.admin_id]
+    column_sortable_list = [CreditMovement.id, CreditMovement.delta, CreditMovement.created_at]
+    column_default_sort = (CreditMovement.id, True)
+    can_create = False
+    can_edit = False
+    can_delete = False
+    name = "Movimiento crédito"
+    name_plural = "Movimientos crédito"
+    icon = "fa-solid fa-coins"
+
+
 class ReferralEarningsAdmin(ModelView, model=ReferralEarnings):
     column_list = [ReferralEarnings.id, ReferralEarnings.referrer_id,
                    ReferralEarnings.referral_id, ReferralEarnings.amount,
@@ -841,14 +861,85 @@ async def tools_home(request: Request) -> HTMLResponse:
         🧾 Bulk cuentas<br><span style="font-weight:400;font-size:13px">Anade muchas cuentas a un producto que ya existe.</span>
       </a>
     </div>
+    <div class="row" style="margin-top:14px">
+      <a href="/tools/config{qs}" style="display:block;padding:18px;border-radius:12px;background:#7c3aed;color:white;text-decoration:none;font-weight:700">
+        ⚙ Config<br><span style="font-weight:400;font-size:13px">Edita bienvenida, reglas, comprar créditos y recarga manual.</span>
+      </a>
+    </div>
     <ul style="margin-top:24px;color:#475569">
       <li><b>Stock</b>: vista real de disponible, asignado, vencido y cancelado por producto.</li>
       <li><b>Mis Compras</b>: dashboard de pedidos con tabs (Activos, Por vencer, Vencidos, Cancelados) y dias restantes.</li>
       <li><b>Bulk productos unicos</b>: pega un bloque tipo <code>usuario|clave|url</code> y crea muchos productos unicos a la vez.</li>
       <li><b>Bulk cuentas</b>: pega muchas cuentas para un producto existente.</li>
+      <li><b>Config</b>: panel central para mensajes del bot y planes de créditos.</li>
     </ul>
     """
     return _render_tools_page("Herramientas de catalogo", body, embedded=bool(request.query_params.get("embed")))
+
+
+async def config_dashboard(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    if request.method == "POST":
+        form = await request.form()
+        updates = {
+            "menu_motd": str(form.get("menu_motd") or "").strip(),
+            "rules_text": str(form.get("rules_text") or "").strip(),
+            "buy_credits_text": str(form.get("buy_credits_text") or "").strip(),
+            "buy_credits_plans": str(form.get("buy_credits_plans") or "").strip(),
+            "manual_recharge_text": str(form.get("manual_recharge_text") or "").strip(),
+        }
+        async with Database().session() as s:
+            for key, value in updates.items():
+                row = await s.get(AppConfig, key)
+                if row:
+                    row.value = value
+                else:
+                    s.add(AppConfig(key=key, value=value))
+        message = "Configuración guardada."
+
+    values = await get_all_config_values()
+    plans = await get_credit_plans()
+    total_stock = await get_total_available_stock()
+    embed = bool(request.query_params.get("embed"))
+    body = f"""
+    <p>Configura desde aquí los textos visibles del bot y los planes de créditos, sin tocar el <code>.env</code>.</p>
+    <form method="post">
+      <label>MOTD / Bienvenida del menú principal</label>
+      <textarea name="menu_motd" style="min-height:120px">{escape(values.get("menu_motd", ""))}</textarea>
+      <div class="hint">Si lo dejas vacío, el bot usa el título normal del menú.</div>
+
+      <label>Texto de Reglas</label>
+      <textarea name="rules_text" style="min-height:180px">{escape(values.get("rules_text", ""))}</textarea>
+
+      <label>Texto de Comprar créditos</label>
+      <textarea name="buy_credits_text" style="min-height:180px">{escape(values.get("buy_credits_text", ""))}</textarea>
+      <div class="hint">Se mostrará arriba del selector de planes y del stock total actual.</div>
+
+      <label>Planes de créditos</label>
+      <textarea name="buy_credits_plans" style="min-height:120px">{escape(values.get("buy_credits_plans", ""))}</textarea>
+      <div class="hint">Una línea por plan, formato <code>USD|CREDITOS</code>. Ejemplo: <code>7|5</code></div>
+
+      <label>Mensaje de recarga manual</label>
+      <textarea name="manual_recharge_text" style="min-height:180px">{escape(values.get("manual_recharge_text", ""))}</textarea>
+      <div class="hint">Puedes usar <code>{{currency}}</code> para insertar la moneda actual.</div>
+
+      <button type="submit">Guardar configuración</button>
+    </form>
+    <h2>Vista rápida</h2>
+    <table class="compact">
+      <thead><tr><th>Dato</th><th>Valor</th></tr></thead>
+      <tbody>
+        <tr><td>Planes activos</td><td>{len(plans)}</td></tr>
+        <tr><td>Stock total disponible</td><td>{total_stock}</td></tr>
+        <tr><td>Solicitudes de créditos</td><td>Se notifican a admins y owner desde el bot</td></tr>
+      </tbody>
+    </table>
+    """
+    return _render_tools_page("Config del bot", body, message=message, embedded=embed)
 
 
 async def stock_dashboard(request: Request) -> HTMLResponse:
@@ -888,6 +979,13 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
         return True
 
     visible = [r for r in rows if keep(r)]
+    category_totals: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cat_name = str(row["category_name"])
+        bucket = category_totals.setdefault(cat_name, {"available": 0, "has_infinite": False, "products": 0})
+        bucket["products"] += 1
+        bucket["available"] += int(row["available"])
+        bucket["has_infinite"] = bucket["has_infinite"] or bool(row["has_infinite"])
 
     total = len(rows)
     total_active = sum(1 for r in rows if r["is_active"])
@@ -940,6 +1038,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
             f'<td>{escape(str(row["category_name"]))}</td>'
             f'<td><b>{escape(row["name"])}</b></td>'
             f'<td>{row["price"]}</td>'
+            f'<td>{row.get("credit_price") if row.get("credit_price") is not None else "—"}</td>'
             f'<td>{active_badge}</td>'
             f'<td>{disp}</td>'
             f'<td>{row["assigned"]}</td>'
@@ -949,6 +1048,14 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
         )
 
     table_rows = "".join(render_row(r) for r in visible)
+    category_rows = "".join(
+        (
+            f"<tr><td>{escape(cat_name)}</td>"
+            f"<td>{data['products']}</td>"
+            f"<td>{'Ilimitado' if data['has_infinite'] else data['available']}</td></tr>"
+        )
+        for cat_name, data in sorted(category_totals.items())
+    )
 
     body = f"""
     <p>Vista real de stock por producto. <b>Disponible</b> cuenta lo vendible ahora mismo. Si el producto es ilimitado se muestra como tal.</p>
@@ -964,6 +1071,11 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
       <button type="submit">Filtrar</button>
       <a href="/tools/stock?embed={"1" if embed else ""}" style="margin-left:6px;color:#475569;text-decoration:none">Limpiar</a>
     </form>
+    <h2>Resumen por categoría</h2>
+    <table class="compact">
+      <thead><tr><th>Categoría</th><th>Productos</th><th>Stock visible</th></tr></thead>
+      <tbody>{category_rows or "<tr><td colspan='3' class='muted'>Sin categorías.</td></tr>"}</tbody>
+    </table>
     <table class="compact">
       <thead>
         <tr>
@@ -971,6 +1083,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
           <th>Categoria</th>
           <th>Producto</th>
           <th>Precio</th>
+          <th>Créditos</th>
           <th>Activo</th>
           <th>Disponible</th>
           <th>Asignado</th>
@@ -978,7 +1091,7 @@ async def stock_dashboard(request: Request) -> HTMLResponse:
           <th>Cancelado</th>
         </tr>
       </thead>
-      <tbody>{table_rows or "<tr><td colspan='9' class='muted'>No hay productos que coincidan con el filtro.</td></tr>"}</tbody>
+      <tbody>{table_rows or "<tr><td colspan='10' class='muted'>No hay productos que coincidan con el filtro.</td></tr>"}</tbody>
     </table>
     <p class="hint">Mostrando {len(visible)} de {total} productos. Stock bajo = 1-3 disponibles. Sin stock = 0 disponibles.</p>
     """
@@ -1011,8 +1124,10 @@ async def quick_new_product(request: Request) -> HTMLResponse:
             category_id = int(category_id_raw)
             duration_days = max(int(duration_days_raw), 1)
             price = Decimal(price_raw)
+            credit_price_raw = (form.get("credit_price") or "").strip()
+            credit_price = int(credit_price_raw) if credit_price_raw else None
         except (TypeError, ValueError, InvalidOperation):
-            message = "Revisa categoria, precio y duracion."
+            message = "Revisa categoria, precio, creditos y duracion."
         else:
             async with Database().session() as s:
                 exists_goods = (await s.execute(
@@ -1030,6 +1145,7 @@ async def quick_new_product(request: Request) -> HTMLResponse:
                         name=name,
                         description=description,
                         price=price,
+                        credit_price=credit_price,
                         category_id=category_id,
                         duration_days=duration_days,
                         is_renewable=is_renewable,
@@ -1056,6 +1172,10 @@ async def quick_new_product(request: Request) -> HTMLResponse:
         <div>
           <label>Precio</label>
           <input type="text" name="price" value="5.00" required>
+        </div>
+        <div>
+          <label>Precio en créditos</label>
+          <input type="number" name="credit_price" value="5" min="0">
         </div>
         <div>
           <label>Duracion dias</label>
@@ -1191,9 +1311,11 @@ async def bulk_unique_products(request: Request) -> HTMLResponse:
         try:
             category_id = int(category_id_raw)
             price = Decimal((form.get("price") or "").strip())
+            credit_price_raw = (form.get("credit_price") or "").strip()
+            credit_price = int(credit_price_raw) if credit_price_raw else None
             duration_days = max(int((form.get("duration_days") or "30").strip()), 1)
         except (TypeError, ValueError, InvalidOperation):
-            message = "Revisa categoria, precio y duracion."
+            message = "Revisa categoria, precio, creditos y duracion."
         else:
             is_renewable = _html_bool(form.get("is_renewable"))
             is_active = _html_bool(form.get("is_active"))
@@ -1231,6 +1353,7 @@ async def bulk_unique_products(request: Request) -> HTMLResponse:
                             name=product_name,
                             description=description,
                             price=price,
+                            credit_price=credit_price,
                             category_id=category_id,
                             duration_days=duration_days,
                             is_renewable=is_renewable,
@@ -1309,6 +1432,10 @@ async def bulk_unique_products(request: Request) -> HTMLResponse:
         <div>
           <label>Precio</label>
           <input type="text" name="price" value="5.00" required>
+        </div>
+        <div>
+          <label>Precio en créditos</label>
+          <input type="number" name="credit_price" value="5" min="0">
         </div>
         <div>
           <label>Duracion dias</label>
@@ -1664,6 +1791,15 @@ class BulkAccountsSidebar(BaseView):
         return _embed(self, request, "/tools/cuentas/bulk-existing", "Bulk cuentas")
 
 
+class ConfigSidebar(BaseView):
+    name = "Config"
+    icon = "fa-solid fa-sliders"
+
+    @expose("/config-dashboard", methods=["GET"])
+    async def index(self, request: Request):
+        return _embed(self, request, "/tools/config", "Config")
+
+
 _TOOLS_LAUNCHER_HTML = """
 <div id="tools-launcher" style="position:fixed;top:14px;right:14px;z-index:9999;display:flex;gap:8px;flex-wrap:wrap;font-family:Arial,sans-serif">
   <a href="/tools/purchases" title="Mis Compras" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0ea5e9,#1d4ed8);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🛒 Mis Compras</a>
@@ -1671,6 +1807,7 @@ _TOOLS_LAUNCHER_HTML = """
   <a href="/tools" title="Herramientas" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🛠 Herramientas</a>
   <a href="/tools/cuentas/bulk-unique" title="Bulk productos unicos" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#f59e0b,#fbbf24);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">⚡ Bulk unicos</a>
   <a href="/tools/cuentas/bulk-existing" title="Bulk cuentas" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#475569,#64748b);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🧾 Bulk cuentas</a>
+  <a href="/tools/config" title="Config" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">⚙ Config</a>
 </div>
 """
 
@@ -1730,6 +1867,7 @@ def create_admin_app() -> Starlette:
         Route("/tools", tools_home),
         Route("/tools/stock", stock_dashboard),
         Route("/tools/purchases", purchases_dashboard),
+        Route("/tools/config", config_dashboard, methods=["GET", "POST"]),
         Route("/tools/products/new", quick_new_product, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-existing", bulk_accounts_existing, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-unique", bulk_unique_products, methods=["GET", "POST"]),
@@ -1754,6 +1892,7 @@ def create_admin_app() -> Starlette:
     admin.add_view(HerramientasSidebar)
     admin.add_view(BulkUniqueSidebar)
     admin.add_view(BulkAccountsSidebar)
+    admin.add_view(ConfigSidebar)
 
     admin.add_view(UserAdmin)
     admin.add_view(RoleAdmin)
@@ -1763,6 +1902,7 @@ def create_admin_app() -> Starlette:
     admin.add_view(BoughtGoodsAdmin)
     admin.add_view(OperationsAdmin)
     admin.add_view(PaymentsAdmin)
+    admin.add_view(CreditMovementsAdmin)
     admin.add_view(ReferralEarningsAdmin)
     admin.add_view(AuditLogAdmin)
     admin.add_view(PromoCodeAdmin)

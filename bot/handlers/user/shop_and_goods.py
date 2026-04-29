@@ -139,8 +139,10 @@ async def shop_callback_handler(call: CallbackQuery, state: FSMContext):
 
     markup = await lazy_paginated_keyboard(
         paginator=paginator,
-        item_text=lambda cat: cat,
-        item_callback=lambda cat: f"cat:{items_index[cat]}:{0}",
+        item_text=lambda cat: (
+            f"{cat['name']} (∞)" if cat["has_infinite"] else f"{cat['name']} ({cat['available']})"
+        ),
+        item_callback=lambda cat: f"cat:{items_index[cat['name']]}:{0}",
         page=0,
         back_cb="back_to_menu",
         nav_cb_prefix="categories-page_",
@@ -174,12 +176,14 @@ async def navigate_categories(call: CallbackQuery, state: FSMContext):
 
     # Pre-fetch page items to build index map and store in state
     page_items = await paginator.get_page(page)
-    items_index = {cat: idx for idx, cat in enumerate(page_items)}
+    items_index = {cat["name"]: idx for idx, cat in enumerate(page_items)}
 
     markup = await lazy_paginated_keyboard(
         paginator=paginator,
-        item_text=lambda cat: cat,
-        item_callback=lambda cat: f"cat:{items_index[cat]}:{page}",
+        item_text=lambda cat: (
+            f"{cat['name']} (∞)" if cat["has_infinite"] else f"{cat['name']} ({cat['available']})"
+        ),
+        item_callback=lambda cat: f"cat:{items_index[cat['name']]}:{page}",
         page=page,
         back_cb="back_to_menu",
         nav_cb_prefix="categories-page_"
@@ -210,7 +214,7 @@ async def items_list_callback_handler(call: CallbackQuery, state: FSMContext):
         await call.answer(localize("shop.item.not_found"), show_alert=True)
         return
 
-    category_name = category_page_items[idx]
+    category_name = category_page_items[idx]["name"]
     back_data = f"categories-page_{cat_page}"
 
     from bot.database.methods.lazy_queries import query_items_in_category

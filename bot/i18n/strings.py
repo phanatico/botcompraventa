@@ -977,6 +977,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
 ES_OVERRIDES = {
     "btn.out_of_stock": "Sin stock",
+    "btn.buy_credits": "💳 Comprar créditos",
+    "btn.home": "🏠 Inicio",
     "btn.apply_promo": "Aplicar promo",
     "btn.remove_promo": "Quitar promo",
     "btn.redeem_promo": "Canjear promo",
@@ -1035,9 +1037,13 @@ ES_OVERRIDES = {
     "profile.caption": "<b>Perfil</b> - <a href='tg://user?id={id}'>{name}</a>",
     "profile.id": "<b>ID</b> - <code>{id}</code>",
     "profile.balance": "<b>Saldo</b> - <code>{amount}</code> {currency}",
+    "profile.credits": "<b>Créditos</b> - <code>{amount}</code>",
     "profile.total_topup": "<b>Total recargado</b> - <code>{amount}</code> {currency}",
     "profile.purchased_count": "<b>Compras</b> - {count}",
     "profile.registration_date": "<b>Registro</b> - <code>{dt}</code>",
+    "buy_credits.request_sent": "✅ Aviso enviado al equipo. Te contactarán para gestionar la recarga.",
+    "buy_credits.no_plans": "No hay planes de créditos configurados todavía.",
+    "buy_credits.choose_plan": "Selecciona el plan que quieres solicitar:",
 }
 
 TRANSLATIONS["es"] = {

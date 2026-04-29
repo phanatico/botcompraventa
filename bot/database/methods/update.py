@@ -155,6 +155,7 @@ async def change_user_telegram_id(old_telegram_id: int, new_telegram_id: int) ->
             telegram_id=new_telegram_id,
             registration_date=current.registration_date,
             balance=current.balance,
+            credit_balance=current.credit_balance,
             referral_id=current.referral_id,
             role_id=current.role_id,
             username=current.username,
