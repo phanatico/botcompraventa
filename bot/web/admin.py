@@ -135,6 +135,7 @@ def _render_tools_page(title: str, body: str, message: str = "", embedded: bool 
       <a href="/tools/cuentas/bulk-existing" class="secondary">Bulk cuentas</a>
       <a href="/tools/cuentas/bulk-unique" class="secondary">Bulk productos unicos</a>
       <a href="/tools/config" class="secondary">Config</a>
+      <a href="/tools/reset-db" class="secondary">Reset DB</a>
     </div>"""
     body_padding = "0" if embedded else "24px"
     wrap_radius = "0" if embedded else "14px"
@@ -234,6 +235,40 @@ def _days_remaining(value: datetime | None) -> str:
     return str(max(delta.days, 0)) if delta.total_seconds() > 0 else "0"
 
 
+async def _reset_database_contents() -> None:
+    truncate_order = [
+        PromoCodeUsages.__tablename__,
+        Reviews.__tablename__,
+        CartItems.__tablename__,
+        CreditMovement.__tablename__,
+        Payments.__tablename__,
+        Operations.__tablename__,
+        BoughtGoods.__tablename__,
+        ItemValues.__tablename__,
+        PromoCodes.__tablename__,
+        ReferralEarnings.__tablename__,
+        Goods.__tablename__,
+        Categories.__tablename__,
+        User.__tablename__,
+        AppConfig.__tablename__,
+        AuditLog.__tablename__,
+    ]
+    table_sql = ", ".join(truncate_order)
+    async with Database().session() as s:
+        await s.execute(text(f"TRUNCATE TABLE {table_sql} RESTART IDENTITY CASCADE"))
+
+    await invalidate_item_cache("*")
+    await invalidate_stats_cache()
+    cache = get_cache_manager()
+    if cache:
+        for pattern in (
+            "category:*", "category_items:*", "item:*", "item_info:*",
+            "item_values:*", "item_stock:*", "user:*", "role:*",
+            "user_stats:*", "user_items:*",
+        ):
+            await cache.invalidate_pattern(pattern)
+
+
 def _extract_original_user_id(request: Request, model: Any) -> int | None:
     for key in ("pk", "identity", "id"):
         raw = request.path_params.get(key)
@@ -295,7 +330,7 @@ from bot.database.main import Database
 from bot.database.models.main import (
     User, Role, Categories, Goods, ItemValues,
     BoughtGoods, Operations, Payments, ReferralEarnings,
-    AuditLog, PromoCodes, CartItems, Reviews, AppConfig, CreditMovement,
+    AuditLog, PromoCodes, PromoCodeUsages, CartItems, Reviews, AppConfig, CreditMovement,
 )
 from bot.misc.metrics import get_metrics
 from bot.misc.caching import get_cache_manager
@@ -940,6 +975,39 @@ async def config_dashboard(request: Request) -> HTMLResponse:
     </table>
     """
     return _render_tools_page("Config del bot", body, message=message, embedded=embed)
+
+
+async def reset_db_dashboard(request: Request) -> HTMLResponse:
+    auth_redirect = _ensure_tools_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    message = ""
+    if request.method == "POST":
+        form = await request.form()
+        confirm = str(form.get("reset_confirmation") or "").strip().upper()
+        if confirm != "RESET TOTAL":
+            message = "Reset cancelado: escribe exactamente RESET TOTAL para confirmar."
+        else:
+            await _reset_database_contents()
+            message = "Base de datos reiniciada. Se conservaron solo los roles; el resto quedó vacío."
+
+    embed = bool(request.query_params.get("embed"))
+    body = """
+    <p>Usa esta herramienta solo cuando quieras empezar completamente de cero.</p>
+    <table class="compact">
+      <thead><tr><th>Se borra</th><th>Se conserva</th></tr></thead>
+      <tbody>
+        <tr><td>Usuarios, categorias, productos, cuentas, compras, pagos, carrito, promos, creditos, auditoria y config</td><td>Roles</td></tr>
+      </tbody>
+    </table>
+    <form method="post">
+      <label>Escribe <code>RESET TOTAL</code> para confirmar</label>
+      <input type="text" name="reset_confirmation" placeholder="RESET TOTAL">
+      <button type="submit" style="background:#dc2626">Resetear base de datos</button>
+    </form>
+    """
+    return _render_tools_page("Reset de base de datos", body, message=message, embedded=embed)
 
 
 async def stock_dashboard(request: Request) -> HTMLResponse:
@@ -1800,6 +1868,15 @@ class ConfigSidebar(BaseView):
         return _embed(self, request, "/tools/config", "Config")
 
 
+class ResetDbSidebar(BaseView):
+    name = "Reset DB"
+    icon = "fa-solid fa-triangle-exclamation"
+
+    @expose("/reset-db", methods=["GET"])
+    async def index(self, request: Request):
+        return _embed(self, request, "/tools/reset-db", "Reset DB")
+
+
 _TOOLS_LAUNCHER_HTML = """
 <div id="tools-launcher" style="position:fixed;top:14px;right:14px;z-index:9999;display:flex;gap:8px;flex-wrap:wrap;font-family:Arial,sans-serif">
   <a href="/tools/purchases" title="Mis Compras" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0ea5e9,#1d4ed8);color:white;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(15,23,42,.22)">🛒 Mis Compras</a>
@@ -1868,6 +1945,7 @@ def create_admin_app() -> Starlette:
         Route("/tools/stock", stock_dashboard),
         Route("/tools/purchases", purchases_dashboard),
         Route("/tools/config", config_dashboard, methods=["GET", "POST"]),
+        Route("/tools/reset-db", reset_db_dashboard, methods=["GET", "POST"]),
         Route("/tools/products/new", quick_new_product, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-existing", bulk_accounts_existing, methods=["GET", "POST"]),
         Route("/tools/cuentas/bulk-unique", bulk_unique_products, methods=["GET", "POST"]),
@@ -1893,6 +1971,7 @@ def create_admin_app() -> Starlette:
     admin.add_view(BulkUniqueSidebar)
     admin.add_view(BulkAccountsSidebar)
     admin.add_view(ConfigSidebar)
+    admin.add_view(ResetDbSidebar)
 
     admin.add_view(UserAdmin)
     admin.add_view(RoleAdmin)

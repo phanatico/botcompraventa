@@ -39,9 +39,13 @@ class SecurityMiddleware(BaseMiddleware):
             'fill-user-balance', 'deduct-user-balance',
             'role_mgmt', 'role_new', 'role_d', 'asr_'
         }
-        # Only transactional actions get replay protection (message age check)
+        # Replay protection is intentionally narrow:
+        # broad prefixes like `buy_` also match benign callbacks such as
+        # `buy`, `buy_credits_plan:*` or confirmation hops and end up blocking
+        # legitimate flows with "session outdated".
         self.replay_protected_actions = {
-            'buy_', 'pay_', 'fill-user-balance', 'deduct-user-balance',
+            'pay_cryptopay', 'pay_stars', 'pay_fiat',
+            'fill-user-balance', 'deduct-user-balance',
         }
 
     def is_critical_action(self, callback_data: str) -> bool:
@@ -59,10 +63,7 @@ class SecurityMiddleware(BaseMiddleware):
         if not callback_data:
             return False
 
-        return any(
-            callback_data.startswith(action)
-            for action in self.replay_protected_actions
-        )
+        return callback_data in self.replay_protected_actions
 
     async def __call__(
             self,
