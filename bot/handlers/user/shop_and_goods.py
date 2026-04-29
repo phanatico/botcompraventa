@@ -135,7 +135,7 @@ async def shop_callback_handler(call: CallbackQuery, state: FSMContext):
 
     # Pre-fetch page items to build index map and store in state
     page_items = await paginator.get_page(0)
-    items_index = {cat: idx for idx, cat in enumerate(page_items)}
+    items_index = {cat["name"]: idx for idx, cat in enumerate(page_items)}
 
     markup = await lazy_paginated_keyboard(
         paginator=paginator,
