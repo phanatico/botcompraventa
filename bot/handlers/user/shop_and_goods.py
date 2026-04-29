@@ -29,6 +29,7 @@ from bot.states.review_state import ReviewFSM
 from bot.states.promo_state import PromoFSM
 
 router = Router()
+CREDITS_LABEL = "créditos"
 
 
 @router.callback_query(F.data == "noop")
@@ -76,21 +77,21 @@ async def _render_item_page(target, state: FSMContext, item_name: str, back_data
     applied_promo = data.get('applied_promo')
 
     # Build price line
-    price = Decimal(str(item_info_data["price"]))
+    price = Decimal(str(item_info_data.get("credit_price") or item_info_data["price"]))
     if applied_promo:
         promo_data = data.get('applied_promo_data', {})
         if promo_data.get('discount_type') == 'percent':
             discount = price * Decimal(str(promo_data.get('discount_value', 0))) / 100
         else:
             discount = min(Decimal(str(promo_data.get('discount_value', 0))), price)
-        discounted = (price - discount).quantize(Decimal("0.01"))
+        discounted = (price - discount).quantize(Decimal("1"))
         price_line = localize(
             "shop.item.price_discounted",
             original=price, discounted=discounted,
-            currency=EnvKeys.PAY_CURRENCY, code=applied_promo,
+            currency=CREDITS_LABEL, code=applied_promo,
         )
     else:
-        price_line = localize("shop.item.price", amount=price, currency=EnvKeys.PAY_CURRENCY)
+        price_line = localize("shop.item.price", amount=price, currency=CREDITS_LABEL)
 
     markup = item_info(
         item_name, back_data,

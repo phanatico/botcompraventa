@@ -23,6 +23,7 @@ from bot.i18n import localize
 from bot.states import BalanceStates
 
 router = Router()
+CREDITS_LABEL = "créditos"
 
 
 async def _notify_referrer_bonus(bot, user_id: int, amount: int, payer_name: str, payer_id: int):
@@ -439,7 +440,7 @@ async def buy_item_confirm_callback_handler(call: CallbackQuery, state: FSMConte
         await call.answer(localize("shop.out_of_stock"), show_alert=True)
         return
 
-    price = Decimal(str(item_info["price"]))
+    price = Decimal(str(item_info.get("credit_price") or item_info["price"]))
     promo_code = data.get('applied_promo')
 
     if promo_code:
@@ -448,7 +449,7 @@ async def buy_item_confirm_callback_handler(call: CallbackQuery, state: FSMConte
             discount = price * Decimal(str(promo_data.get('discount_value', 0))) / 100
         else:
             discount = min(Decimal(str(promo_data.get('discount_value', 0))), price)
-        price = (price - discount).quantize(Decimal("0.01"))
+        price = (price - discount).quantize(Decimal("1"))
 
     from bot.keyboards.inline import simple_buttons
     buttons = [
@@ -461,7 +462,7 @@ async def buy_item_confirm_callback_handler(call: CallbackQuery, state: FSMConte
             "shop.purchase.confirm",
             item_name=item_name,
             price=price,
-            currency=EnvKeys.PAY_CURRENCY,
+            currency=CREDITS_LABEL,
         ),
         reply_markup=simple_buttons(buttons, per_row=2),
         parse_mode="HTML",
@@ -572,7 +573,7 @@ async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
                 value=safe_value,
                 expires_at=format_date(purchase_data.get('expires_at')),
                 days_left=days_left_str(purchase_data.get('expires_at')),
-                currency=EnvKeys.PAY_CURRENCY,
+                currency=CREDITS_LABEL,
             ),
             parse_mode='HTML',
             reply_markup=simple_buttons(buttons),
@@ -586,7 +587,7 @@ async def buy_item_callback_handler(call: CallbackQuery, state: FSMContext):
                 user_id=user_id,
                 resource_type="Item",
                 resource_id=purchase_request.item_name[:100],
-                details=f"name={user_info.first_name[:50]}, price={purchase_data['price']} {EnvKeys.PAY_CURRENCY}, unique_id={purchase_data['unique_id']}",
+                details=f"name={user_info.first_name[:50]}, price={purchase_data['price']} {CREDITS_LABEL}, unique_id={purchase_data['unique_id']}",
             )
         except Exception as e:
             await log_audit("purchase", level="ERROR", user_id=user_id, resource_type="Item", details=f"log_failed: {e}")

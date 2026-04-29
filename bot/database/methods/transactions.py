@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
 
 from sqlalchemy import select, update, exists as sa_exists, delete as sa_delete, or_
@@ -22,6 +22,15 @@ def _format_stock_value(item_value: ItemValues) -> str:
         f"Contrasena: {item_value.account_password or '-'}",
         f"URL: {item_value.account_url or '-'}",
     ])
+
+
+def _effective_credit_price(goods: Goods) -> int:
+    """Resolve effective price in credits for the current credits-only mode."""
+    if goods.credit_price is not None:
+        return max(int(goods.credit_price), 0)
+
+    rounded = Decimal(str(goods.price)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return max(int(rounded), 0)
 
 
 async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str = None) -> tuple[bool, str, dict | None]:
@@ -58,7 +67,8 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                     return False, "item_inactive", None
 
                 price = Decimal(str(goods.price))
-                final_price = price
+                credit_price = Decimal(_effective_credit_price(goods))
+                final_price = credit_price
                 discount_info = None
 
                 # 2.5. Apply promo code if provided
@@ -104,22 +114,23 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
 
                     # Apply discount
                     if promo.discount_type == 'percent':
-                        final_price = price * (1 - Decimal(str(promo.discount_value)) / 100)
+                        final_price = credit_price * (1 - Decimal(str(promo.discount_value)) / 100)
                     else:
-                        final_price = max(price - Decimal(str(promo.discount_value)), Decimal(0))
-                    final_price = final_price.quantize(Decimal("0.01"))
+                        final_price = max(credit_price - Decimal(str(promo.discount_value)), Decimal(0))
+                    final_price = final_price.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
                     # Record usage
                     promo.current_uses += 1
                     s.add(PromoCodeUsages(promo_id=promo.id, user_id=telegram_id))
                     discount_info = {
                         "code": promo.code,
-                        "original_price": float(price),
-                        "discount": float(price - final_price),
+                        "original_price": int(credit_price),
+                        "discount": int(credit_price - final_price),
                     }
 
                 # 3. Checking the balance
-                if user.balance < final_price:
+                final_price_int = int(final_price)
+                if user.credit_balance < final_price_int:
                     await s.rollback()
                     return False, "insufficient_funds", None
 
@@ -154,13 +165,13 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                     item_value.assigned_user_id = telegram_id
 
                 # 6. Write off the balance
-                user.balance -= final_price
+                user.credit_balance -= final_price_int
 
                 # 7. Create a purchase record
                 bought_item = BoughtGoods(
                     name=item_name,
                     value=_format_stock_value(item_value),
-                    price=final_price,
+                    price=final_price_int,
                     buyer_id=telegram_id,
                     bought_datetime=purchase_start,
                     unique_id=uuid4().int >> 65,
@@ -190,8 +201,8 @@ async def buy_item_transaction(telegram_id: int, item_name: str, promo_code: str
                 result_data = {
                     "item_name": item_name,
                     "value": _format_stock_value(item_value),
-                    "price": float(final_price),
-                    "new_balance": float(user.balance),
+                    "price": final_price_int,
+                    "new_balance": int(user.credit_balance),
                     "unique_id": bought_item.unique_id,
                     "bought_id": bought_item.id,
                     "bought_datetime": bought_item.bought_datetime.isoformat(),
@@ -410,7 +421,8 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                     claimed_value_ids.add(item_value.id)
 
                     price = Decimal(str(goods.price))
-                    final_price = price
+                    credit_price = Decimal(_effective_credit_price(goods))
+                    final_price = credit_price
 
                     # Validate and apply promo code if stored on cart item
                     if ci.promo_code:
@@ -445,10 +457,10 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                             return False, "promo_expired_during_checkout", None
 
                         if promo.discount_type == 'percent':
-                            final_price = price * (1 - Decimal(str(promo.discount_value)) / 100)
+                            final_price = credit_price * (1 - Decimal(str(promo.discount_value)) / 100)
                         else:
-                            final_price = max(price - Decimal(str(promo.discount_value)), Decimal(0))
-                        final_price = final_price.quantize(Decimal("0.01"))
+                            final_price = max(credit_price - Decimal(str(promo.discount_value)), Decimal(0))
+                        final_price = final_price.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
                         promos_to_record.append(promo)
 
                     purchases.append({
@@ -470,7 +482,8 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                     return False, "cart_items_unavailable", None
 
                 # 4. Check balance
-                if user.balance < total_price:
+                total_price_int = int(total_price)
+                if user.credit_balance < total_price_int:
                     await s.rollback()
                     return False, "insufficient_funds", None
 
@@ -491,7 +504,7 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                     bought_item = BoughtGoods(
                         name=p['goods'].name,
                         value=_format_stock_value(p['item_value']),
-                        price=p['price'],
+                        price=int(p['price']),
                         buyer_id=user_id,
                         bought_datetime=purchase_start,
                         unique_id=uuid4().int >> 65,
@@ -513,7 +526,7 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                     results.append({
                         "item_name": p['goods'].name,
                         "value": _format_stock_value(p['item_value']),
-                        "price": float(p['price']),
+                        "price": int(p['price']),
                         "bought_id": bought_item.id,
                         "unique_id": bought_item.unique_id,
                         "bought_datetime": bought_item.bought_datetime.isoformat(),
@@ -527,7 +540,7 @@ async def checkout_cart_transaction(user_id: int) -> tuple[bool, str, list | Non
                     s.add(PromoCodeUsages(promo_id=promo.id, user_id=user_id))
 
                 # 7. Deduct total
-                user.balance -= total_price
+                user.credit_balance -= total_price_int
 
                 # 8. Clear cart
                 await s.execute(

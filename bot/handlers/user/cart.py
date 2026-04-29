@@ -13,6 +13,7 @@ from bot.misc import EnvKeys
 from bot.i18n import localize
 
 router = Router()
+CREDITS_LABEL = "créditos"
 
 
 async def _resolve_promo_price(price: Decimal, promo_code: str | None) -> Decimal | None:
@@ -27,7 +28,7 @@ async def _resolve_promo_price(price: Decimal, promo_code: str | None) -> Decima
         discount = price * Decimal(str(promo['discount_value'])) / 100
     else:
         discount = min(Decimal(str(promo['discount_value'])), price)
-    return (price - discount).quantize(Decimal("0.01"))
+    return (price - discount).quantize(Decimal("1"))
 
 
 async def _show_cart(call: CallbackQuery):
@@ -49,20 +50,20 @@ async def _show_cart(call: CallbackQuery):
     for item in items:
         info = await get_item_info(item['item_name'])
         if not info:
-            lines.append(localize("cart.item", name=item['item_name'], price='?', currency=EnvKeys.PAY_CURRENCY))
+            lines.append(localize("cart.item", name=item['item_name'], price='?', currency=CREDITS_LABEL))
             continue
 
-        price = Decimal(str(info['price']))
+        price = Decimal(str(info.get('credit_price') or info['price']))
         discounted = await _resolve_promo_price(price, item.get('promo_code'))
 
         if discounted is not None:
-            lines.append(f"🏷 <b>{item['item_name']}</b> — <s>{price}</s> {discounted} {EnvKeys.PAY_CURRENCY} ({item['promo_code']})")
+            lines.append(f"🏷 <b>{item['item_name']}</b> — <s>{price}</s> {discounted} {CREDITS_LABEL} ({item['promo_code']})")
             real_total += discounted
         else:
-            lines.append(localize("cart.item", name=item['item_name'], price=price, currency=EnvKeys.PAY_CURRENCY))
+            lines.append(localize("cart.item", name=item['item_name'], price=price, currency=CREDITS_LABEL))
             real_total += price
 
-    lines.append(localize("cart.total", total=real_total, currency=EnvKeys.PAY_CURRENCY))
+    lines.append(localize("cart.total", total=real_total, currency=CREDITS_LABEL))
 
     buttons = []
     for item in items:
@@ -131,7 +132,7 @@ async def _calc_cart_total_with_promos(user_id: int) -> Decimal:
         info = await get_item_info(item['item_name'])
         if not info:
             continue
-        price = Decimal(str(info['price']))
+        price = Decimal(str(info.get('credit_price') or info['price']))
         discounted = await _resolve_promo_price(price, item.get('promo_code'))
         total += discounted if discounted is not None else price
     return total
@@ -148,7 +149,7 @@ async def cart_checkout_handler(call: CallbackQuery, state: FSMContext):
         (localize("btn.no"), "cart"),
     ]
     await call.message.edit_text(
-        localize("cart.checkout_confirm", count=count, total=total, currency=EnvKeys.PAY_CURRENCY),
+        localize("cart.checkout_confirm", count=count, total=total, currency=CREDITS_LABEL),
         reply_markup=simple_buttons(buttons),
     )
 
@@ -192,7 +193,7 @@ async def cart_checkout_confirm_handler(call: CallbackQuery, state: FSMContext):
             "cart.checkout_receipt",
             count=len(results),
             total=total,
-            currency=EnvKeys.PAY_CURRENCY,
+            currency=CREDITS_LABEL,
             username=username,
             user_id=user_id,
             datetime=dt,
@@ -237,7 +238,7 @@ async def cart_receipt_handler(call: CallbackQuery, state: FSMContext):
             "cart.checkout_receipt",
             count=len(results),
             total=total,
-            currency=EnvKeys.PAY_CURRENCY,
+            currency=CREDITS_LABEL,
             username=username,
             user_id=call.from_user.id,
             datetime=dt,
